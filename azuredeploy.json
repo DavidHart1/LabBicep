@@ -1,0 +1,127 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+
+    "parameters": {
+        "localAdminName": {
+            "type": "string",
+            "defaultValue": "***REMOVED***",
+            "minLength": 5,
+            "maxLength": 15
+        },
+        "localAdminPassword": {
+            "type": "securestring",
+            "minLength": 8,
+            "maxLength": 32
+        },
+        "storageAccountName" : {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 24,
+            "defaultValue": "hlalabsa01"
+        },
+        "vnetRGName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the Resource Group containing the virtual network"
+            }
+        },
+        "dcVMName" : {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 15,
+            "defaultValue": "HLA-DC01"
+        },
+        "storageSKU": {
+            "type": "string",
+            "defaultValue": "Standard_LRS",
+            "allowedValues": [
+                "Standard_LRS",
+                "Standard_GRS",
+                "Standard_RAGRS",
+                "Standard_ZRS",
+                "Premium_LRS",
+                "Premium_ZRS",
+                "Standard_GZRS",
+                "Standard_RAGZRS"
+            ]
+        },
+        "location": {
+            "type": "string",
+            "defaultValue": "westus3"
+        },
+        "VNetName": {
+            "type": "string",
+            "defaultValue": "HLA-HubNet"
+        },
+        "VNetSubnetName": {
+            "type": "string",
+            "defaultValue": "Trusted-Subnet"
+        }
+    },
+    "variables": {
+        //fix vnet parameters
+        "vnetId": "[resourceId(parameters('vnetRGName'),'Microsoft.Network/virtualNetworks',parameters('VNetName'))]"
+       // "subnetRef": "[concat(variables('vnetId'), '/subnets/',parameters('VNetSubnetName'))]"
+        
+    },
+
+
+    "resources": [
+        //Storage Account for resources
+        {
+            "type": "Microsoft.Storage/storageAccounts",
+            "apiVersion": "2021-09-01",
+            "name": "[parameters('storageAccountName')]",
+            "location": "[parameters('location')]",
+            "sku": {
+                "name": "[parameters('storageSKU')]"
+            },
+            "kind": "StorageV2",
+            "properties": {
+                "mode": "Incremental",
+                "supportsHttpsTrafficOnly": true
+            }
+        },
+
+
+      // Domain Controller VM 
+        {
+            "type": "Microsoft.Resources/deployments",
+            "apiVersion": "2022-09-01",
+            "name": "CreateDCVM",
+            "properties": {
+                "mode": "Incremental",
+                "templateLink": {
+                    "relativePath": "SubTemplates/WindowsVM.json"
+                },
+                "parameters": {
+                    "location": {
+                        "value": "[parameters('location')]"
+                    },
+                    "networkInterfaceName": {
+                        "value": "[concat(parameters('dcVMName'),'-nic1')]"
+                    },
+                    "subnetName": {
+                        "value": "[parameters('VNetSubnetName')]"
+                    },
+                    "virtualMachineName": {
+                        "value": "[parameters('dcVMName')]"
+                    },                   
+                        "virtualMachineComputerName": {
+                        "value": "[parameters('dcVMName')]"
+                    },
+                    "adminUsername": {
+                        "value": "[parameters('localAdminName')]"
+                    },
+                    "adminPassword": {
+                        "value": "[parameters('localAdminPassword')]"
+                    },
+                    "virtualNetworkId": {
+                        "value": "[variables('vnetId')]"
+                    }
+                }
+            }
+        }
+    ]
+  }
