@@ -5,8 +5,5 @@
         "localAdminPassword": {
             "value": "Today123" 
         },
-        "vnetRGName": {
-            "value": "HLA-NetHub-W3"
-        }
     }
 }

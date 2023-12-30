@@ -20,12 +20,7 @@
             "maxLength": 24,
             "defaultValue": "hlalabsa01"
         },
-        "vnetRGName": {
-            "type": "string",
-            "metadata": {
-                "description": "Name of the Resource Group containing the virtual network"
-            }
-        },
+
         "dcVMName" : {
             "type": "string",
             "minLength": 3,
