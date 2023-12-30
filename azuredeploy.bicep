@@ -7,22 +7,20 @@ param localAdminName string = '***REMOVED***'
 @secure()
 param localAdminPassword string
 
-@minLength(3)
-@maxLength(24)
-param storageAccountName string = 'hlalabsa01'
+@minLength(2)
+@maxLength(5)
+param namePrefix string
 
-@description('Name of the Resource Group containing the virtual network')
-param vnetRGName string
-
-@description('Name of the Log Analytics Workspace')
-param lawName string
+//@description('Name of the Resource Group containing the virtual network')
+//param vnetRGName string
 
 //@description('Name of the Sentinel Workspace')
 //param sentinelName string
 
-@minLength(3)
-@maxLength(15)
-param dcVMName string = 'HLA-DC01'
+var storageAccountName = '${namePrefix}labsa01'
+var lawName = '${namePrefix}-law01'
+var dcVMName = '${namePrefix}-DC01'
+param dcForestName string = 'alpha.hartlabs.info'
 
 // Network Params
   param virtualNetworkName string = 'HLA-HubNet'
@@ -82,7 +80,10 @@ param dcVMName string = 'HLA-DC01'
   ])
   param storageSKU string = 'Standard_LRS'
   param location string = 'westus3'
+  param containerName string = 'bicep'
 
+var automationName = '${namePrefix}-Auto1'
+param baseTime string = utcNow('u')
 
 // Create VNET
 module vnet 'SubTemplates/vnet/vnet.bicep' =  {
@@ -185,6 +186,23 @@ module nsgopnsense 'SubTemplates/vnet/nsg.bicep' = {
     name: '${virtualNetworkName}/${windowsvmsubnetname}'
   }
 
+var _artifactsLocationSasToken = labSA.listServiceSas('2021-09-01', {
+  canonicalizedResource: '/blob/${labSA.name}/bicep'
+  signedResource: 'c'
+  signedProtocol: 'https'
+  signedPermission: 'r'
+  signedServices: 'b'
+  signedExpiry: dateTimeAdd(baseTime, 'PT1H')
+}).serviceSasToken
+
+// Create Automation Account
+  module automator 'SubTemplates/accessories/AzAuto.bicep' = {
+    name: '${automationName}-Deployment'
+    params: {
+      accountName: automationName
+      location: location
+    }
+  }
 
 // Create OPNsense TwoNics
   module opnSenseTwoNics 'SubTemplates/VM/opnsense.bicep' = {
@@ -326,6 +344,8 @@ module nsgopnsense 'SubTemplates/vnet/nsg.bicep' = {
     ]
   }
 
+// Create Storage Account and Upload Blobs
+
   resource labSA 'Microsoft.Storage/storageAccounts@2021-09-01' = {
     name: storageAccountName
     location: location
@@ -335,6 +355,15 @@ module nsgopnsense 'SubTemplates/vnet/nsg.bicep' = {
     kind: 'StorageV2'
     properties: {
       supportsHttpsTrafficOnly: true
+    }
+  }
+
+  module blob 'SubTemplates/accessories/UploadDCConfig.bicep' = {
+    name: 'blob-example'
+    scope: resourceGroup()
+    params: {
+      location: location
+      storageAccountName: labSA.name
     }
   }
 
@@ -349,12 +378,18 @@ module nsgopnsense 'SubTemplates/vnet/nsg.bicep' = {
       virtualMachineComputerName: dcVMName
       adminUsername: localAdminName
       adminPassword: localAdminPassword
+      forestName: dcForestName
+      dscConfigScriptName: 'ConfigureDC.ps1'
+      dscConfigScriptSASToken: _artifactsLocationSasToken
+      dscConfigScriptURI: '${labSA.properties.primaryEndpoints.blob}${containerName}/ConfigureVMs.ps1.zip'
     }
     dependsOn: [
       vnet
-
+      blob
     ]
   }
+
+// TODO: Update DNS for VNet after DC is deployed
 
 // Deploy Log Analytics and Sentinel
   resource logAnalyticsWorkspace 'Microsoft.OperationalInsights/workspaces@2020-10-01' = {

@@ -10,7 +10,10 @@ param osDiskDeleteOption string = 'Delete'
 param virtualMachineSize string = 'Standard_B2s'
 param nicDeleteOption string = 'Delete'
 param adminUsername string
-
+param dscConfigScriptURI string
+param dscConfigScriptName string
+param dscConfigScriptSASToken string
+param forestName string
 @secure()
 param adminPassword string
 param patchMode string = 'AutomaticByOS'
@@ -53,6 +56,16 @@ resource virtualMachine 'Microsoft.Compute/virtualMachines@2022-11-01' = {
         }
         deleteOption: osDiskDeleteOption
       }
+      dataDisks: [
+        {
+          createOption: 'empty'
+          lun: 0
+          diskSizeGB: 64
+          managedDisk: {
+            storageAccountType: 'StandardSSD_LRS'
+          }
+        }
+      ]
       imageReference: {
         publisher: 'MicrosoftWindowsServer'
         offer: 'WindowsServer'
@@ -102,7 +115,41 @@ resource virtualMachine 'Microsoft.Compute/virtualMachines@2022-11-01' = {
   }
 }
 
-resource vmext 'Microsoft.Compute/virtualMachines/extensions@2023-07-01' = {
+resource dscExtension 'Microsoft.Compute/virtualMachines/extensions@2022-11-01' = {
+  parent: virtualMachine
+  name: 'DSC'
+  location: location
+  properties: {
+    publisher: 'Microsoft.Powershell'
+    type: 'DSC'
+    typeHandlerVersion: '2.80'
+    autoUpgradeMinorVersion: true
+    settings: {
+      configuration: {
+        url: dscConfigScriptURI
+        script: dscConfigScriptName
+        function: 'Main'
+      }
+      configurationArguments: {
+        domainName: forestName
+      }
+      privacy: {
+        dataCollection: 'Disable'
+      }
+    }
+    protectedSettings: {
+      configurationUrlSasToken: '?${dscConfigScriptSASToken}'
+      configurationArguments: {
+        adminCreds: {
+          userName: adminUsername
+          password: adminPassword
+        }
+      }
+    }
+  }
+}
+
+/* resource vmext 'Microsoft.Compute/virtualMachines/extensions@2023-07-01' = {
   parent: virtualMachine
   name: 'CustomScript'
   location: location
@@ -118,6 +165,6 @@ resource vmext 'Microsoft.Compute/virtualMachines/extensions@2023-07-01' = {
       commandToExecute: 'powershell.exe -ExecutionPolicy Unrestricted -File ${dcConfigScriptName} '
     }
   }
-}
+} */
 
 output adminUsername string = adminUsername
