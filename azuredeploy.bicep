@@ -17,7 +17,7 @@ param namePrefix string
 //@description('Name of the Sentinel Workspace')
 //param sentinelName string
 
-var storageAccountName = '${namePrefix}labsa01'
+var storageAccountName = toLower('${namePrefix}labsa01')
 var lawName = '${namePrefix}-law01'
 var dcVMName = '${namePrefix}-DC01'
 param dcForestName string = 'alpha.hartlabs.info'
@@ -345,7 +345,6 @@ var _artifactsLocationSasToken = labSA.listServiceSas('2021-09-01', {
   }
 
 // Create Storage Account and Upload Blobs
-
   resource labSA 'Microsoft.Storage/storageAccounts@2021-09-01' = {
     name: storageAccountName
     location: location
@@ -357,17 +356,48 @@ var _artifactsLocationSasToken = labSA.listServiceSas('2021-09-01', {
       supportsHttpsTrafficOnly: true
     }
   }
-
-  module blob 'SubTemplates/accessories/UploadDCConfig.bicep' = {
-    name: 'blob-example'
-    scope: resourceGroup()
+  var saPrincipalName = '${namePrefix}-saPrincipal1'
+  module saPrincipal 'SubTemplates/accessories/AzPrincipal.bicep' = {
+    name: 'storageIdentity'
     params: {
+      principalName: saPrincipalName
       location: location
-      storageAccountName: labSA.name
     }
   }
 
+  resource storageContribRoleDef 'Microsoft.Authorization/roleDefinitions@2022-04-01' existing = {
+    scope: subscription()
+    name: 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+  }
+
+  resource saPrincipalBlobContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+    name: guid(resourceGroup().id, saPrincipal.name, storageContribRoleDef.id)
+    scope: labSA
+    properties: {
+      principalId: saPrincipal.outputs.principalId
+      principalType: 'ServicePrincipal'
+      roleDefinitionId: storageContribRoleDef.id
+    }
+    dependsOn: [
+      saPrincipal
+    ]
+  }
+
+  module blob 'SubTemplates/accessories/UploadDCConfig.bicep' = {
+    name: 'DCConfigBlob'
+    scope: resourceGroup()
+    params: {
+      identityId: saPrincipal.outputs.principalResource
+      location: location
+      storageAccountName: labSA.name
+    }
+    dependsOn: [
+      saPrincipalBlobContributor
+    ]
+  }
+
 // Create VM for ADDS Domain Controller
+// TODO: Once app gallery is done, configure to deploy Cloud Sync
   module CreateDCVM 'SubTemplates/WindowsVM.bicep' = {
     name: 'CreateDCVM'
     params: {
@@ -381,7 +411,7 @@ var _artifactsLocationSasToken = labSA.listServiceSas('2021-09-01', {
       forestName: dcForestName
       dscConfigScriptName: 'ConfigureDC.ps1'
       dscConfigScriptSASToken: _artifactsLocationSasToken
-      dscConfigScriptURI: '${labSA.properties.primaryEndpoints.blob}${containerName}/ConfigureVMs.ps1.zip'
+      dscConfigScriptURI: '${labSA.properties.primaryEndpoints.blob}${containerName}/ConfigureDC.zip'
     }
     dependsOn: [
       vnet
@@ -419,6 +449,18 @@ var _artifactsLocationSasToken = labSA.listServiceSas('2021-09-01', {
       promotionCode: ''
     }
   }
+
+// Deploy App Gallery
+var appGalleryname = '${namePrefix}_AppGallery1'
+module appGallery 'SubTemplates/vmapps/gallery.bicep' = {
+  name: appGalleryname
+  params: {
+    location: location
+    galleryName: appGalleryname
+  }
+}
+// TODO: Deploy Cloud Sync in App Gallery
+
 
 output workspaceId string = logAnalyticsWorkspace.id
 output workspaceName string = logAnalyticsWorkspace.name
