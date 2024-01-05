@@ -10,7 +10,9 @@ param location string = resourceGroup().location
 @description('Desired name of the storage account')
 param storageAccountName string
 
-resource storage 'Microsoft.Storage/storageAccounts@2021-04-01' = {
+param identityId string
+
+resource storage 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   name: storageAccountName
   location: location
   sku: {
@@ -27,13 +29,18 @@ resource storage 'Microsoft.Storage/storageAccounts@2021-04-01' = {
   }
 }
 
-resource deploymentScript 'Microsoft.Resources/deploymentScripts@2020-10-01' = {
+resource deploymentScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
   name: 'deployscript-upload-blob-${filename}'
   location: location
   kind: 'AzureCLI'
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${identityId}': {}
+    }
+  }
   properties: {
-    azCliVersion: '2.26.1'
-    timeout: 'PT5M'
+    azCliVersion: '2.52.0'
     retentionInterval: 'PT1H'
     environmentVariables: [
       {
@@ -41,14 +48,10 @@ resource deploymentScript 'Microsoft.Resources/deploymentScripts@2020-10-01' = {
         value: storage.name
       }
       {
-        name: 'AZURE_STORAGE_KEY'
-        secureValue: storage.listKeys().keys[0].value
-      }
-      {
         name: 'CONTENT'
-        value: loadTextContent('../../Blobs/ConfigureDC.zip')
+        value: loadFileAsBase64('../../Blobs/ConfigureDC.zip')
       }
     ]
-    scriptContent: 'echo "$CONTENT" > ${filename} && az storage blob upload -f ${filename} -c ${containerName} -n ${filename} --auth-mode key'
+    scriptContent: 'echo "$CONTENT" > ${filename} && az storage blob upload --type block --content-encoding base64 -f ${filename} -c ${containerName} -n ${filename} --auth-mode login'
   }
 }
