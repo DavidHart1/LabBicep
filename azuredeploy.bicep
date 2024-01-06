@@ -191,7 +191,6 @@ var _artifactsLocationSasToken = labSA.listServiceSas('2021-09-01', {
   signedResource: 'c'
   signedProtocol: 'https'
   signedPermission: 'r'
-  signedServices: 'b'
   signedExpiry: dateTimeAdd(baseTime, 'PT1H')
 }).serviceSasToken
 
