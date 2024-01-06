@@ -10,7 +10,13 @@ param localAdminPassword string
 @minLength(2)
 @maxLength(5)
 param namePrefix string
-
+@description('Whether or not to provision a Domain Controller')
+param provisionDC bool = true
+@description('Name of Az Managed Identity with User.Read.All in Entra')
+param dcPrincipalName string = 'entratest'
+//param dcPrincipalName string = '${namePrefix}-dcPrincipal1'
+@description('Whether or not to provision LogAnalytics and Sentinel')
+param provisionSentinel bool = true
 //@description('Name of the Resource Group containing the virtual network')
 //param vnetRGName string
 
@@ -20,7 +26,8 @@ param namePrefix string
 var storageAccountName = toLower('${namePrefix}labsa01')
 var lawName = '${namePrefix}-law01'
 var dcVMName = '${namePrefix}-DC01'
-param dcForestName string = 'alpha.hartlabs.info'
+// ! Change this
+param dcForestName string = 'alpha.hartlabs.info' 
 
 // Network Params
   param virtualNetworkName string = 'HLA-HubNet'
@@ -86,7 +93,7 @@ var automationName = '${namePrefix}-Auto1'
 param baseTime string = utcNow('u')
 
 // Create VNET
-module vnet 'SubTemplates/vnet/vnet.bicep' =  {
+module vnet 'SubTemplates/vnet/vnet.bicep' = {
   name: virtualNetworkName
   params: {
     location: location
@@ -192,6 +199,14 @@ var _artifactsLocationSasToken = labSA.listServiceSas('2021-09-01', {
   signedProtocol: 'https'
   signedPermission: 'r'
   signedExpiry: dateTimeAdd(baseTime, 'PT1H')
+}).serviceSasToken
+
+var _appsSasToken = labSA.listServiceSas('2021-09-01', {
+  canonicalizedResource: '/blob/${labSA.name}/bicep'
+  signedResource: 'c'
+  signedProtocol: 'https'
+  signedPermission: 'r'
+  signedExpiry: dateTimeAdd(baseTime, 'P1Y')
 }).serviceSasToken
 
 // Create Automation Account
@@ -343,7 +358,7 @@ var _artifactsLocationSasToken = labSA.listServiceSas('2021-09-01', {
     ]
   }
 
-// Create Storage Account and Upload Blobs
+// Create Storage Account
   resource labSA 'Microsoft.Storage/storageAccounts@2021-09-01' = {
     name: storageAccountName
     location: location
@@ -363,12 +378,10 @@ var _artifactsLocationSasToken = labSA.listServiceSas('2021-09-01', {
       location: location
     }
   }
-
   resource storageContribRoleDef 'Microsoft.Authorization/roleDefinitions@2022-04-01' existing = {
     scope: subscription()
     name: 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
   }
-
   resource saPrincipalBlobContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
     name: guid(resourceGroup().id, saPrincipal.name, storageContribRoleDef.id)
     scope: labSA
@@ -381,11 +394,12 @@ var _artifactsLocationSasToken = labSA.listServiceSas('2021-09-01', {
       saPrincipal
     ]
   }
-
-  module dcBlob 'SubTemplates/accessories/CopyFile.bicep' = {
+// Upload Blobs
+  module dcBlob 'SubTemplates/accessories/CopyFile.bicep' = if(provisionDC) {
     name: 'DCConfigBlob'
     scope: resourceGroup()
     params: {
+      filename: 'ConfigureDC.zip'
       identityId: saPrincipal.outputs.principalResource
       location: location
       storageAccountName: labSA.name
@@ -395,10 +409,28 @@ var _artifactsLocationSasToken = labSA.listServiceSas('2021-09-01', {
       saPrincipalBlobContributor
     ]
   }
+  module AADCAgentBlob 'SubTemplates/accessories/CopyFile.bicep' = if(provisionDC) {
+    name: 'AADCAgentBlob'
+    scope: resourceGroup()
+    params: {
+      filename: 'AADConnectProvisioningAgentSetup.exe'
+      identityId: saPrincipal.outputs.principalResource
+      location: location
+      storageAccountName: labSA.name
+      sourceFileUri: 'https://github.com/HartD92/LabBicepArtifacts/raw/main/Blobs/AADConnectProvisioningAgentSetup.exe'
+    }
+    dependsOn: [
+      saPrincipalBlobContributor
+    ]
+  }
+// Pull Existing Managed Identity for DC to Access Entra
+  resource dcPrincipal 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = if (provisionDC) {
+    name: dcPrincipalName
+  }
 
 // Create VM for ADDS Domain Controller
 // TODO: Once app gallery is done, configure to deploy Cloud Sync
-  module CreateDCVM 'SubTemplates/WindowsVM.bicep' = {
+  module CreateDCVM 'SubTemplates/WindowsVM.bicep'  = if (provisionDC) {
     name: 'CreateDCVM'
     params: {
       location: location
@@ -408,6 +440,8 @@ var _artifactsLocationSasToken = labSA.listServiceSas('2021-09-01', {
       virtualMachineComputerName: dcVMName
       adminUsername: localAdminName
       adminPassword: localAdminPassword
+      identityId: dcPrincipal.id
+      CloudSyncAppId: cloudSyncApp.outputs.appReference
       forestName: dcForestName
       dscConfigScriptName: 'ConfigureDC.ps1'
       dscConfigScriptSASToken: _artifactsLocationSasToken
@@ -419,10 +453,11 @@ var _artifactsLocationSasToken = labSA.listServiceSas('2021-09-01', {
     ]
   }
 
-// TODO: Update DNS for VNet after DC is deployed
+// TODO: Figure out how to update DNS for VNet after DC is deployed.
+// TODO: Maybe just have to do it on NICs for future VMS?
 
 // Deploy Log Analytics and Sentinel
-  resource logAnalyticsWorkspace 'Microsoft.OperationalInsights/workspaces@2020-10-01' = {
+  resource logAnalyticsWorkspace 'Microsoft.OperationalInsights/workspaces@2020-10-01' = if (provisionSentinel) {
     name: lawName
     location: location
     properties: {
@@ -436,7 +471,7 @@ var _artifactsLocationSasToken = labSA.listServiceSas('2021-09-01', {
     }
   }
   var solutionName = 'SecurityInsights(${logAnalyticsWorkspace.name})'
-  resource sentinel 'Microsoft.OperationsManagement/solutions@2015-11-01-preview' = {
+  resource sentinel 'Microsoft.OperationsManagement/solutions@2015-11-01-preview' = if (provisionSentinel){
     name: solutionName
     location: location
     properties: {
@@ -460,7 +495,22 @@ module appGallery 'SubTemplates/vmapps/gallery.bicep' = {
   }
 }
 // TODO: Deploy Cloud Sync in App Gallery
-
+var sas_url = '${labSA.properties.primaryEndpoints.blob}${containerName}/AADConnectProvisioningAgentSetup.exe?${_appsSasToken}'
+module cloudSyncApp 'SubTemplates/vmapps/application.bicep' = if (provisionDC) {
+  name: 'CloudSync'
+  params: {
+    location: location
+    galleryName: appGalleryname
+    appName: 'CloudSync'
+    fileURI: sas_url
+    installCommand: '.\\AADConnectProvisioningAgentSetup.exe /quiet /norestart'
+    uninstallCommand: 'uninstall.exe'
+  }
+  dependsOn: [
+    appGallery
+    AADCAgentBlob
+  ]
+}
 
 output workspaceId string = logAnalyticsWorkspace.id
 output workspaceName string = logAnalyticsWorkspace.name
