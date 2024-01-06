@@ -29,6 +29,8 @@ Compile DSC files (if needeD)
 2. Import-Module Az
 3. Publish-AzVMDscConfiguration .\DSC\ConfigureDC.ps1 -OutputArchivePath .\ConfigureDC.zip
 
+If you plan to provision a domain controller, you will need to pre-provision a user-assigned managed identity, and grant it User.Read.All (preferably using a custom Entra role)
+
 Create Bicep param file and populate with required parameters.
 
 ## Usage

@@ -1,5 +1,5 @@
 @description('Name of the blob as it is stored in the blob container')
-param filename string = 'ConfigureDC.zip'
+param filename string
 
 @description('Name of the blob container')
 param containerName string = 'bicep'

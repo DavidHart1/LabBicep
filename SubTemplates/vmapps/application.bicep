@@ -38,3 +38,5 @@ resource appVersion 'Microsoft.Compute/galleries/applications/versions@2022-08-0
     }
   }
 }
+
+output appReference string = appVersion.id

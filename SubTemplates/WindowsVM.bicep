@@ -16,6 +16,8 @@ param dscConfigScriptSASToken string
 param forestName string
 @secure()
 param adminPassword string
+param identityId string
+param CloudSyncAppId string
 param patchMode string = 'AutomaticByOS'
 param enableHotpatching bool = false
 param securityType string = 'TrustedLaunch'
@@ -44,6 +46,12 @@ resource networkInterface 'Microsoft.Network/networkInterfaces@2022-11-01' = {
 resource virtualMachine 'Microsoft.Compute/virtualMachines@2022-11-01' = {
   name: virtualMachineName
   location: location
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${identityId}' : {}
+    }
+  }
   properties: {
     hardwareProfile: {
       vmSize: virtualMachineSize
@@ -98,6 +106,15 @@ resource virtualMachine 'Microsoft.Compute/virtualMachines@2022-11-01' = {
           patchMode: patchMode
         }
       }
+    }
+    applicationProfile: {
+      galleryApplications: [
+        {
+          order: 1
+          packageReferenceId: CloudSyncAppId
+          treatFailureAsDeploymentFailure: true
+        }
+      ]
     }
     licenseType: 'Windows_Server'
     securityProfile: {
@@ -168,3 +185,4 @@ resource dscExtension 'Microsoft.Compute/virtualMachines/extensions@2022-11-01' 
 } */
 
 output adminUsername string = adminUsername
+output dcIP string = networkInterface.properties.ipConfigurations[0].properties.privateIPAddress
