@@ -11,6 +11,7 @@ param location string = resourceGroup().location
 param storageAccountName string
 
 param identityId string
+param sourceFileUri string
 
 resource storage 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   name: storageAccountName
@@ -47,11 +48,7 @@ resource deploymentScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
         name: 'AZURE_STORAGE_ACCOUNT'
         value: storage.name
       }
-      {
-        name: 'CONTENT'
-        value: loadFileAsBase64('../../Blobs/ConfigureDC.zip')
-      }
     ]
-    scriptContent: 'echo "$CONTENT" | base64 -d > ${filename} && az storage blob upload --type block -f ${filename} -c ${containerName} -n ${filename} --auth-mode login'
+    scriptContent: 'wget ${sourceFileUri} && az storage blob upload --type block --content-encoding base64 -f ${filename} -c ${containerName} -n ${filename} --auth-mode login'
   }
 }
