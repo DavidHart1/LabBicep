@@ -382,13 +382,14 @@ var _artifactsLocationSasToken = labSA.listServiceSas('2021-09-01', {
     ]
   }
 
-  module blob 'SubTemplates/accessories/UploadDCConfig.bicep' = {
+  module dcBlob 'SubTemplates/accessories/CopyFile.bicep' = {
     name: 'DCConfigBlob'
     scope: resourceGroup()
     params: {
       identityId: saPrincipal.outputs.principalResource
       location: location
       storageAccountName: labSA.name
+      sourceFileUri: 'https://github.com/HartD92/LabBicepArtifacts/raw/main/Blobs/ConfigureDC.zip'
     }
     dependsOn: [
       saPrincipalBlobContributor
@@ -414,7 +415,7 @@ var _artifactsLocationSasToken = labSA.listServiceSas('2021-09-01', {
     }
     dependsOn: [
       vnet
-      blob
+      dcBlob
     ]
   }
 
