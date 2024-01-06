@@ -128,7 +128,7 @@ resource dscExtension 'Microsoft.Compute/virtualMachines/extensions@2022-11-01' 
       configuration: {
         url: dscConfigScriptURI
         script: dscConfigScriptName
-        function: 'Main'
+        function: 'ConfigureDC'
       }
       configurationArguments: {
         domainName: forestName
