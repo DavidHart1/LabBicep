@@ -7,6 +7,11 @@ param localAdminName string = 'HLA-Admin'
 @secure()
 param localAdminPassword string
 
+@minLength(8)
+@maxLength(32)
+@secure()
+param adUserPassword string
+
 @minLength(2)
 @maxLength(5)
 param namePrefix string
@@ -423,9 +428,19 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       saPrincipalBlobContributor
     ]
   }
-// Pull Existing Managed Identity for DC to Access Entra
-  resource dcPrincipal 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = if (provisionDC) {
-    name: dcPrincipalName
+  module AADSetupBlob 'SubTemplates/accessories/CopyFile.bicep' = if(provisionDC) {
+    name: 'AADSetupBlob'
+    scope: resourceGroup()
+    params: {
+      filename: 'AADSetup.ps1'
+      identityId: saPrincipal.outputs.principalResource
+      location: location
+      storageAccountName: labSA.name
+      sourceFileUri: 'https://github.com/HartD92/LabBicepArtifacts/raw/main/Blobs/AADSetup.ps1'
+    }
+    dependsOn: [
+      saPrincipalBlobContributor
+    ]
   }
 
 // Create VM for ADDS Domain Controller
@@ -440,12 +455,15 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       virtualMachineComputerName: dcVMName
       adminUsername: localAdminName
       adminPassword: localAdminPassword
-      identityId: dcPrincipal.id
+      userPassword: adUserPassword
+      identityName: dcPrincipalName
       CloudSyncAppId: cloudSyncApp.outputs.appReference
       forestName: dcForestName
       dscConfigScriptName: 'ConfigureDC.ps1'
       dscConfigScriptSASToken: _artifactsLocationSasToken
       dscConfigScriptURI: '${labSA.properties.primaryEndpoints.blob}${containerName}/ConfigureDC.zip'
+      aadSetupScriptName: 'AADSetup.ps1'
+      aadSetupScriptURI: '${labSA.properties.primaryEndpoints.blob}${containerName}/AADSetup.ps1?${_artifactsLocationSasToken}'
     }
     dependsOn: [
       vnet
