@@ -13,16 +13,26 @@ param adminUsername string
 param dscConfigScriptURI string
 param dscConfigScriptName string
 param dscConfigScriptSASToken string
+param aadSetupScriptName string
+param aadSetupScriptURI string
+@secure()
+param userPassword string
 param forestName string
 @secure()
 param adminPassword string
-param identityId string
+param identityName string
 param CloudSyncAppId string
 param patchMode string = 'AutomaticByOS'
 param enableHotpatching bool = false
 param securityType string = 'TrustedLaunch'
 param secureBoot bool = true
 param vTPM bool = true
+
+// Pull Existing Managed Identity for DC to Access Entra
+  resource dcPrincipal 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
+    name: identityName
+  }
+
 
 resource networkInterface 'Microsoft.Network/networkInterfaces@2022-11-01' = {
   name: networkInterfaceName
@@ -49,7 +59,7 @@ resource virtualMachine 'Microsoft.Compute/virtualMachines@2022-11-01' = {
   identity: {
     type: 'UserAssigned'
     userAssignedIdentities: {
-      '${identityId}' : {}
+      '${dcPrincipal.id}' : {}
     }
   }
   properties: {
@@ -165,24 +175,30 @@ resource dscExtension 'Microsoft.Compute/virtualMachines/extensions@2022-11-01' 
     }
   }
 }
-
-/* resource vmext 'Microsoft.Compute/virtualMachines/extensions@2023-07-01' = {
+var clientId = dcPrincipal.properties.clientId
+// TODO: Figure out a way to use securestrings...
+resource vmext 'Microsoft.Compute/virtualMachines/extensions@2023-07-01' = {
   parent: virtualMachine
-  name: 'CustomScript'
+  name: 'AADSetup'
   location: location
   properties: {
     publisher: 'Microsoft.Compute'
     type: 'CustomScriptExtension'
     typeHandlerVersion: '1.5'
-    autoUpgradeMinorVersion: false
+    autoUpgradeMinorVersion: true
     settings:{
+    }
+    protectedSettings: {
       fileUris: [
-        '${labBuildURI}${dcConfigScriptName}'
+        '${aadSetupScriptURI}'
       ]
-      commandToExecute: 'powershell.exe -ExecutionPolicy Unrestricted -File ${dcConfigScriptName} '
+      commandToExecute: 'powershell.exe -ExecutionPolicy Unrestricted -File .\\${aadSetupScriptName} -adminUsername ${adminUsername} -adminPassword ${adminPassword} -NewUserPassword ${userPassword} -domainName ${forestName} -ManagedIdentityClientId ${clientId}'
     }
   }
-} */
+  dependsOn: [
+    dscExtension
+  ]
+}
 
 output adminUsername string = adminUsername
 output dcIP string = networkInterface.properties.ipConfigurations[0].properties.privateIPAddress
