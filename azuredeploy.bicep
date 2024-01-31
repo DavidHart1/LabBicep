@@ -426,7 +426,7 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       identityId: saPrincipal.outputs.principalResource
       location: location
       storageAccountName: labSA.name
-      sourceFileUri: 'https://github.com/HartD92/LabBicepArtifacts/raw/KeyVault/Blobs/ConfigureDC.zip'
+      sourceFileUri: 'https://github.com/HartD92/LabBicepArtifacts/raw/main/Blobs/ConfigureDC.zip'
     }
     dependsOn: [
       saPrincipalBlobContributor
@@ -454,7 +454,7 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       identityId: saPrincipal.outputs.principalResource
       location: location
       storageAccountName: labSA.name
-      sourceFileUri: 'https://github.com/HartD92/LabBicepArtifacts/raw/KeyVault/Blobs/AADSetup.ps1'
+      sourceFileUri: 'https://github.com/HartD92/LabBicepArtifacts/raw/main/Blobs/AADSetup.ps1'
     }
     dependsOn: [
       saPrincipalBlobContributor
@@ -468,7 +468,7 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       identityId: saPrincipal.outputs.principalResource
       location: location
       storageAccountName: labSA.name
-      sourceFileUri: 'https://github.com/HartD92/LabBicepArtifacts/raw/KeyVault/Blobs/ConfigureCloudSync.ps1'
+      sourceFileUri: 'https://github.com/HartD92/LabBicepArtifacts/raw/main/Blobs/ConfigureCloudSync.ps1'
     }
     dependsOn: [
       saPrincipalBlobContributor
@@ -482,7 +482,7 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       identityId: saPrincipal.outputs.principalResource
       location: location
       storageAccountName: labSA.name
-      sourceFileUri: 'https://github.com/HartD92/LabBicepArtifacts/raw/KeyVault/Blobs/DCSetupOrchestrator.ps1'
+      sourceFileUri: 'https://github.com/HartD92/LabBicepArtifacts/raw/main/Blobs/DCSetupOrchestrator.ps1'
     }
     dependsOn: [
       saPrincipalBlobContributor
