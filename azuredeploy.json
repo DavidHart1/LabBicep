@@ -5,7 +5,7 @@
     "parameters": {
         "localAdminName": {
             "type": "string",
-            "defaultValue": "***REMOVED***",
+            "defaultValue": "HLA-Admin",
             "minLength": 5,
             "maxLength": 15
         },

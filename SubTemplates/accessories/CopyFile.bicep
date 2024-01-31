@@ -49,6 +49,6 @@ resource deploymentScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
         value: storage.name
       }
     ]
-    scriptContent: 'wget ${sourceFileUri} && az storage blob upload --type block --content-encoding base64 -f ${filename} -c ${containerName} -n ${filename} --auth-mode login'
+    scriptContent: 'wget ${sourceFileUri} && az storage blob upload --type block --content-encoding base64 --overwrite -f ${filename} -c ${containerName} -n ${filename} --auth-mode login'
   }
 }

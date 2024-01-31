@@ -24,11 +24,12 @@ It deploys:
 
 ## Installation
 
-Compile DSC files (if needeD)
-1. Install-module az,xStorage,xActiveDirectory,xNetworking,PSDesiredStateConfiguration,xPendingReboot
-2. Import-Module Az
-3. Publish-AzVMDscConfiguration .\DSC\ConfigureDC.ps1 -OutputArchivePath .\ConfigureDC.zip
+Compile DSC files (if needed)
+1. `Install-module az,xStorage,xActiveDirectory,xNetworking,PSDesiredStateConfiguration,xPendingReboot`
+2. `Import-Module Az`
+3. `Publish-AzVMDscConfiguration .\Scripts\ConfigureDC.ps1 -OutputArchivePath .\ConfigureDC.zip`
 
+If you plan to provision the OPNSense firewall, you will need to accept the FreeBSD license terms using the following command: `az vm image terms accept --publisher "thefreebsdfoundation" --offer "freebsd-13_1" --plan "13_1-release"`
 If you plan to provision a domain controller, you will need to pre-provision a user-assigned managed identity, and grant it User.Read.All (preferably using a custom Entra role)
 
 Create Bicep param file and populate with required parameters.
