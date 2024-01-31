@@ -14,9 +14,8 @@ param dscConfigScriptURI string
 param dscConfigScriptName string
 param dscConfigScriptSASToken string
 param aadSetupScriptName string
-param aadSetupScriptURI string
-@secure()
-param userPassword string
+param aadSetupScriptURIs array
+param keyVaultParameters object
 param forestName string
 @secure()
 param adminPassword string
@@ -176,6 +175,13 @@ resource dscExtension 'Microsoft.Compute/virtualMachines/extensions@2022-11-01' 
   }
 }
 var clientId = dcPrincipal.properties.clientId
+var VaultName = keyVaultParameters.VaultName
+var AzAdminSecret = keyVaultParameters.AzAdminSecretName
+var AzPassSecret = keyVaultParameters.AzPassSecretName
+var DomainAdminSecret = keyVaultParameters.DomainAdminSecretName
+var DomainPassSecret = keyVaultParameters.DomainPassSecretName
+var DomainUserSecret = keyVaultParameters.DomainUserSecretName
+var subscriptionId = subscription().subscriptionId
 // TODO: Figure out a way to use securestrings...
 resource vmext 'Microsoft.Compute/virtualMachines/extensions@2023-07-01' = {
   parent: virtualMachine
@@ -189,10 +195,10 @@ resource vmext 'Microsoft.Compute/virtualMachines/extensions@2023-07-01' = {
     settings:{
     }
     protectedSettings: {
-      fileUris: [
-        '${aadSetupScriptURI}'
-      ]
-      commandToExecute: 'powershell.exe -ExecutionPolicy Unrestricted -File .\\${aadSetupScriptName} -adminUsername ${adminUsername} -adminPassword ${adminPassword} -NewUserPassword ${userPassword} -domainName ${forestName} -ManagedIdentityClientId ${clientId}'
+      fileUris: aadSetupScriptURIs
+      // Need to add VaultName, SubscriptionId, and these secret names:
+      // AzAdminSecret, AzPassSecret, DomainAdminSecret, DomainPassSecret, DomainUserSecret
+      commandToExecute: 'powershell.exe -ExecutionPolicy Unrestricted -File .\\${aadSetupScriptName} -VaultName ${VaultName} -SubscriptionId ${subscriptionId} -AzAdminSecretName ${AzAdminSecret} -AzPassSecretName ${AzPassSecret} -DomainAdminSecretName ${DomainAdminSecret} -DomainPassSecretName ${DomainPassSecret} -DomainUserSecretName ${DomainUserSecret}  -domainName ${forestName} -ManagedIdentityClientId ${clientId}'
     }
   }
   dependsOn: [

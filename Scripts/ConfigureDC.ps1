@@ -12,9 +12,9 @@ configuration ConfigureDC
         [Int]$RetryIntervalSec=30
     )
 
-    Import-DscResource -ModuleName xActiveDirectory, xStorage, xNetworking, PSDesiredStateConfiguration, xPendingReboot
+    Import-DscResource -ModuleName DnsServerDsc,xActiveDirectory, xStorage, xNetworking, PSDesiredStateConfiguration, xPendingReboot
     [System.Management.Automation.PSCredential ]$DomainCreds = New-Object System.Management.Automation.PSCredential ("${DomainName}\$($Admincreds.UserName)", $Admincreds.Password)
-    $Interface=Get-NetAdapter| Where-Object Name -Like "Ethernet*"|Select-Object -First 1
+    $Interface=Get-NetAdapter| Where-Object InterfaceDescription -Like "Microsoft Hyper-V*"|sort ifIndex | Select-Object -First 1
     $InterfaceAlias=$($Interface.Name)
 
     Node localhost
@@ -39,6 +39,13 @@ configuration ConfigureDC
             GetScript =  { @{} }
             TestScript = { $false }
             DependsOn = "[WindowsFeature]DNS"
+        }
+
+        DnsServerForwarder 'SetForwarder'
+        {
+            IsSingleInstance = 'Yes'
+            IPAddresses = @('8.8.8.8')
+            UseRootHint = $true
         }
 
         WindowsFeature DnsTools

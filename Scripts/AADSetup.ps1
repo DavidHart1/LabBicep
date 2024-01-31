@@ -1,17 +1,23 @@
 param (
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory, ParameterSetName = 'Passwords')]
     [string]$AdminUsername,
 
-    [Parameter(Mandatory = $true)]
-    [string]$AdminPassword,
+    [Parameter(Mandatory, ParameterSetName = 'Passwords')]
+    [securestring]$AdminPassword,
 
-    [Parameter(Mandatory = $true)]
-    [string]$NewUserPassword,
+    [Parameter(Mandatory, ParameterSetName = 'Credentials')]
+    [System.Management.Automation.PSCredential]$DomainCredential,
 
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory, ParameterSetName = 'Passwords')]
+    [Parameter(Mandatory, ParameterSetName = 'Credentials')]
+    [securestring]$NewUserPassword,
+
+    [Parameter(Mandatory, ParameterSetName = 'Passwords')]
+    [Parameter(Mandatory, ParameterSetName = 'Credentials')]
     [string]$ManagedIdentityClientId,
 
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory, ParameterSetName = 'Passwords')]
+    [Parameter(Mandatory, ParameterSetName = 'Credentials')]
     [string]$domainName
 )
 <#
@@ -49,12 +55,14 @@ Import-Module Microsoft.Graph.Authentication
 Import-Module Microsoft.Graph.Users
 Import-Module ActiveDirectory
 # Connect to Azure Active Directory
+if ($PSCmdlet.ParameterSetName -eq 'Passwords') {
 $domainUsername = "$domainName\$AdminUsername"
-$domainCredential = New-Object System.Management.Automation.PSCredential($domainUsername, (ConvertTo-SecureString $AdminPassword -AsPlainText -force))
+$domainCredential = New-Object System.Management.Automation.PSCredential($domainUsername, $AdminPassword)
+}
 Connect-MgGraph -Identity -ClientId $ManagedIdentityClientId
 
 # Download all cloud users
-$cloudUsers = Get-MgUser -All
+$cloudUsers = Get-MgUser -All | Where-Object { $_.UserPrincipalName -notlike "*onmicrosoft.com" }
 
 # Provision users in Active Directory
 $ouName = "Entra"
@@ -83,7 +91,7 @@ foreach ($user in $cloudUsers) {
         Enabled               = $true
         Path                  = $ouPath
         Credential            = $domainCredential
-        AccountPassword       = (ConvertTo-SecureString $NewUserPassword -AsPlainText -Force)
+        AccountPassword       = $NewUserPassword
         ChangePasswordAtLogon = $false
         PasswordNeverExpires  = $false
         PasswordNotRequired   = $false

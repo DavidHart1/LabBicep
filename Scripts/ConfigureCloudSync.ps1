@@ -1,26 +1,52 @@
+[CmdletBinding(DefaultParameterSetName = 'Credentials')]
 param(
-    [Parameter(Mandatory=$true)]
+    [Parameter(Mandatory, ParameterSetName = 'Passwords')]
     [string]$hybridAdminUPN,
     
-    [Parameter(Mandatory=$true)]
+    [Parameter(Mandatory, ParameterSetName = 'Passwords')]
     [securestring]$hybridAdminPassword,
 
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory, ParameterSetName = 'Passwords')]
     [string]$domainAdminUPN,
     
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory, ParameterSetName = 'Passwords')]
     [securestring]$domainAdminPassword,
 
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory, ParameterSetName = 'Credentials')]
+    [System.Management.Automation.PSCredential]$hybridAdminCreds,
+    # Maybe change this to a PSObject for the token info?
+    [Parameter(Mandatory, ParameterSetName = 'CredentialAndToken')]
+    [string]$accessToken,
+    
+    [Parameter(Mandatory, ParameterSetName = 'CredentialAndToken')]
+    [string]$tenantId,
+    
+    [Parameter(Mandatory, ParameterSetName = 'CredentialAndToken')]
+    [string]$userId,
+
+    [Parameter(Mandatory, ParameterSetName = 'Credentials')]
+    [Parameter(Mandatory, ParameterSetName = 'CredentialAndToken')]
+    [System.Management.Automation.PSCredential]$domainAdminCreds,
+
+    [Parameter(Mandatory, ParameterSetName = 'Passwords')]
+    [Parameter(Mandatory, ParameterSetName = 'Credentials')]
+    [Parameter(Mandatory, ParameterSetName = 'CredentialAndToken')]
     [string]$domainname
 )
+
 Import-Module "C:\Program Files\Microsoft Azure AD Connect Provisioning Agent\Microsoft.CloudSync.PowerShell.dll" 
-
-$hybridAdminCreds = New-Object System.Management.Automation.PSCredential -ArgumentList ($hybridAdminUPN, $hybridAdminPassword) 
+if ($PSCmdlet.ParameterSetName -eq 'Passwords'){
+    $hybridAdminCreds = New-Object System.Management.Automation.PSCredential -ArgumentList ($hybridAdminUPN, $hybridAdminPassword) 
+}
+if ($PSCmdlet.ParameterSetName -ne 'CredentialAndToken'){
 Connect-AADCloudSyncAzureAD -Credential $hybridAdminCreds
-
-$domainAdminCreds = New-Object System.Management.Automation.PSCredential -ArgumentList ($domainAdminUPN, $domainAdminPassword) 
-
+}
+else{
+    Connect-AADCloudSyncAzureAD -AccessToken $accessToken -TenantId $tenantId -UserPrincipalName $userId
+}
+if ($PSCmdlet.ParameterSetName -eq 'Passwords'){
+    $domainAdminCreds = New-Object System.Management.Automation.PSCredential -ArgumentList ($domainAdminUPN, $domainAdminPassword) 
+}
 Add-AADCloudSyncGMSA -Credential $domainAdminCreds
 Add-AADCloudSyncADDomain -DomainName $domainname -Credential $domainAdminCreds 
 

@@ -1,11 +1,20 @@
 @minLength(5)
 @maxLength(15)
-param localAdminName string = '***REMOVED***'
+param localAdminName string
 
 @minLength(8)
 @maxLength(32)
 @secure()
 param localAdminPassword string
+
+@minLength(5)
+@maxLength(40)
+param AzAdminName string
+
+@minLength(8)
+@maxLength(32)
+@secure()
+param AzAdminPassword string
 
 @minLength(8)
 @maxLength(32)
@@ -18,7 +27,7 @@ param namePrefix string
 @description('Whether or not to provision a Domain Controller')
 param provisionDC bool = true
 @description('Name of Az Managed Identity with User.Read.All in Entra')
-param dcPrincipalName string = 'entratest'
+param dcPrincipalName string
 //param dcPrincipalName string = '${namePrefix}-dcPrincipal1'
 @description('Whether or not to provision LogAnalytics and Sentinel')
 param provisionSentinel bool = true
@@ -72,7 +81,7 @@ param dcForestName string = 'alpha.hartlabs.info'
   @sys.description('Shell Script to be executed')
   param ShellScriptName string = 'configureopnsense.sh'
   @sys.description('OPNSense VM size, please choose a size which allow 2 NICs.')
-  param virtualMachineSize string = 'Standard_B2s'
+  param virtualMachineSize string = 'Standard_B2ls_v2'
   // OPNSense Mgmt Machine Params/Vars
   var winvmroutetablename = 'winvmroutetable'
   var winvmName = 'OPNSenseAdmin'
@@ -115,6 +124,14 @@ module vnet 'SubTemplates/vnet/vnet.bicep' = {
         name: trustedSubnetName
         properties: {
           addressPrefix: TrustedSubnetCIDR
+          serviceEndpoints: [
+            {
+              service: 'Microsoft.KeyVault'
+              locations: [
+                '${location}'
+              ]
+            }
+          ]
         }
       }
       {
@@ -196,6 +213,11 @@ module nsgopnsense 'SubTemplates/vnet/nsg.bicep' = {
 
   resource windowsvmsubnet 'Microsoft.Network/virtualNetworks/subnets@2023-05-01' existing =  {
     name: '${virtualNetworkName}/${windowsvmsubnetname}'
+  }
+
+// Pull Existing Managed Identity for DC to Access Entra
+  resource dcPrincipal 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
+    name: dcPrincipalName
   }
 
 var _artifactsLocationSasToken = labSA.listServiceSas('2021-09-01', {
@@ -294,9 +316,6 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
         }
       ]
     }
-    dependsOn: [
-      opnSenseTwoNics
-    ]
   }
 
   module winvmpublicip 'SubTemplates/vnet/publicip.bicep' = {
@@ -313,7 +332,7 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       }
     }
     dependsOn: [
-      opnSenseTwoNics
+      vnet
     ]
   }
 
@@ -324,7 +343,7 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       rtName: winvmroutetablename
     }
     dependsOn: [
-      opnSenseTwoNics
+      vnet
     ]
   }
 
@@ -359,7 +378,6 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
     dependsOn: [
       nsgwinvm
       winvmpublicip
-      opnSenseTwoNics
     ]
   }
 
@@ -408,7 +426,7 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       identityId: saPrincipal.outputs.principalResource
       location: location
       storageAccountName: labSA.name
-      sourceFileUri: 'https://github.com/HartD92/LabBicepArtifacts/raw/main/Blobs/ConfigureDC.zip'
+      sourceFileUri: 'https://github.com/HartD92/LabBicepArtifacts/raw/KeyVault/Blobs/ConfigureDC.zip'
     }
     dependsOn: [
       saPrincipalBlobContributor
@@ -436,7 +454,35 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       identityId: saPrincipal.outputs.principalResource
       location: location
       storageAccountName: labSA.name
-      sourceFileUri: 'https://github.com/HartD92/LabBicepArtifacts/raw/main/Blobs/AADSetup.ps1'
+      sourceFileUri: 'https://github.com/HartD92/LabBicepArtifacts/raw/KeyVault/Blobs/AADSetup.ps1'
+    }
+    dependsOn: [
+      saPrincipalBlobContributor
+    ]
+  }
+  module ConfigCSBlob 'SubTemplates/accessories/CopyFile.bicep' = if(provisionDC) {
+    name: 'ConfigCSBlob'
+    scope: resourceGroup()
+    params: {
+      filename: 'ConfigureCloudSync.ps1'
+      identityId: saPrincipal.outputs.principalResource
+      location: location
+      storageAccountName: labSA.name
+      sourceFileUri: 'https://github.com/HartD92/LabBicepArtifacts/raw/KeyVault/Blobs/ConfigureCloudSync.ps1'
+    }
+    dependsOn: [
+      saPrincipalBlobContributor
+    ]
+  }
+  module DCSOrchBlob 'SubTemplates/accessories/CopyFile.bicep' = if(provisionDC) {
+    name: 'DCSOrchBlob'
+    scope: resourceGroup()
+    params: {
+      filename: 'DCSetupOrchestrator.ps1'
+      identityId: saPrincipal.outputs.principalResource
+      location: location
+      storageAccountName: labSA.name
+      sourceFileUri: 'https://github.com/HartD92/LabBicepArtifacts/raw/KeyVault/Blobs/DCSetupOrchestrator.ps1'
     }
     dependsOn: [
       saPrincipalBlobContributor
@@ -453,21 +499,36 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       subnetRef: trustedSubnet.id
       virtualMachineName: dcVMName
       virtualMachineComputerName: dcVMName
+      virtualMachineSize: virtualMachineSize
       adminUsername: localAdminName
       adminPassword: localAdminPassword
-      userPassword: adUserPassword
       identityName: dcPrincipalName
       CloudSyncAppId: cloudSyncApp.outputs.appReference
       forestName: dcForestName
       dscConfigScriptName: 'ConfigureDC.ps1'
       dscConfigScriptSASToken: _artifactsLocationSasToken
       dscConfigScriptURI: '${labSA.properties.primaryEndpoints.blob}${containerName}/ConfigureDC.zip'
-      aadSetupScriptName: 'AADSetup.ps1'
-      aadSetupScriptURI: '${labSA.properties.primaryEndpoints.blob}${containerName}/AADSetup.ps1?${_artifactsLocationSasToken}'
+      aadSetupScriptName: 'DCSetupOrchestrator.ps1'
+      aadSetupScriptURIs: [
+        '${labSA.properties.primaryEndpoints.blob}${containerName}/ConfigureCloudSync.ps1?${_artifactsLocationSasToken}'
+        '${labSA.properties.primaryEndpoints.blob}${containerName}/AADSetup.ps1?${_artifactsLocationSasToken}'
+        '${labSA.properties.primaryEndpoints.blob}${containerName}/DCSetupOrchestrator.ps1?${_artifactsLocationSasToken}'
+      ]
+      keyVaultParameters: {
+        VaultName: '${namePrefix}-kv1'
+        AzAdminSecretName:'AzAdminName'
+        AzPassSecretName: 'AzAdminPassword'
+        DomainAdminSecretName: 'localAdminName'
+        DomainPassSecretName: 'localAdminPassword'
+        DomainUserSecretName: 'adUserPassword'
+      }
     }
     dependsOn: [
       vnet
       dcBlob
+      AADSetupBlob
+      ConfigCSBlob
+      DCSOrchBlob
     ]
   }
 
@@ -529,6 +590,70 @@ module cloudSyncApp 'SubTemplates/vmapps/application.bicep' = if (provisionDC) {
     AADCAgentBlob
   ]
 }
+//Key Vault and Secrets
+  module keyVault 'SubTemplates/accessories/keyvault.bicep' = {
+    name: '${namePrefix}-kv1'
+    params: {
+      location: location
+      keyVaultName: '${namePrefix}-kv1'
+      accessPolicies: [ {
+          tenantId: subscription().tenantId
+          objectId: dcPrincipal.properties.principalId
+          permissions: {
+            secrets: [
+              'get'
+              'list'
+            ]
+          }
+        } ]
+      networkAcls: {
+        bypass: 'AzureServices'
+        defaultAction: 'Deny'
+        ipRules: []
+        virtualNetworkRules: [
+          {
+            id: trustedSubnet.id
+            ignoreMissingVnetServiceEndpoint: false
+          }
+        ]
+      }
+      secrets: [
+        {
+          name: 'adUserPassword'
+          contentType: 'Password'
+          value: adUserPassword
+        }
+        {
+          name: 'localAdminPassword'
+          contentType: 'Password'
+          value: localAdminPassword
+        }
+        {
+          name: 'localAdminName'
+          contentType: 'Username'
+          value: localAdminName
+        }
+        {
+          name: 'AzAdminPassword'
+          contentType: 'Password'
+          value: AzAdminPassword
+        }
+        {
+          name: 'AzAdminName'
+          contentType: 'Username'
+          value: AzAdminName
+        }
+        {
+          name: 'entraPrincipalId'
+          contentType: 'ClientId'
+          value: saPrincipal.outputs.principalId
+        }
+      ]
+    }
+    dependsOn: [
+      saPrincipal
+    ]
+  }
 
 output workspaceId string = logAnalyticsWorkspace.id
 output workspaceName string = logAnalyticsWorkspace.name
