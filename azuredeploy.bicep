@@ -1,3 +1,5 @@
+provider microsoftGraph
+
 @minLength(5)
 @maxLength(15)
 param localAdminName string
@@ -26,11 +28,36 @@ param adUserPassword string
 param namePrefix string
 @description('Whether or not to provision a Domain Controller')
 param provisionDC bool = true
+// Right Now this only skips the actual provisioning. It doesn't properly adjust the route table, NSG, etc.
+@description('Whether or not to provision OPNSense')
+param provisionOPNSense bool = true
 @description('Name of Az Managed Identity with User.Read.All in Entra')
 param dcPrincipalName string
 //param dcPrincipalName string = '${namePrefix}-dcPrincipal1'
 @description('Whether or not to provision LogAnalytics and Sentinel')
-param provisionSentinel bool = true
+param provisionSentinel bool = false
+@description('Whether or not to provision an AD-Joined Windows 11 VM')
+param provisionWindowsVM {
+  provision: bool
+  nameSuffix: string
+} = {nameSuffix: 'win11', provision: true}
+@description('Whether or not to provision an Entra-Joined Windows 11 VM')
+param provisionEntraWindowsVM {
+  provision: bool
+  nameSuffix: string
+} = {nameSuffix: 'entra', provision: true}
+@description('Whether or not to provision an AzSQL VM, and what to suffix it. Will be namePrefix-nameSuffix')
+param azSQL {
+  provision: bool
+  nameSuffix: string
+  adminGroupName: string
+  groupExisting: bool
+} = {nameSuffix: 'azsql1', provision: true, adminGroupName: 'sg-IT', groupExisting: false}
+@description('Whether or not to provision Intune')
+param intune {
+  provision: bool
+  nameSuffix: string
+} = {provision: true, nameSuffix: 'intunecd'}
 //@description('Name of the Resource Group containing the virtual network')
 //param vnetRGName string
 
@@ -41,7 +68,7 @@ var storageAccountName = toLower('${namePrefix}labsa01')
 var lawName = '${namePrefix}-law01'
 var dcVMName = '${namePrefix}-DC01'
 // ! Change this
-param dcForestName string = 'alpha.hartlabs.info' 
+param dcForestName string
 
 // Network Params
   param virtualNetworkName string = 'HLA-HubNet'
@@ -75,14 +102,15 @@ param dcForestName string = 'alpha.hartlabs.info'
   @sys.description('URI for Custom OPN Script and Config')
   param OpnScriptURI string = 'https://raw.githubusercontent.com/dmauser/opnazure/master/scripts/'
   @sys.description('OPN Version')
-  param OpnVersion string = '23.1'
+  param OpnVersion string = '24.1'
   @sys.description('Azure WALinux agent Version')
-  param WALinuxVersion string = '2.9.1.1'
+  param WALinuxVersion string = '2.11.1.4'
   @sys.description('Shell Script to be executed')
   param ShellScriptName string = 'configureopnsense.sh'
   @sys.description('OPNSense VM size, please choose a size which allow 2 NICs.')
-  param virtualMachineSize string = 'Standard_B2ls_v2'
+  param virtualMachineSize string = 'Standard_B2s'
   // OPNSense Mgmt Machine Params/Vars
+  // TODO: Change this to another object param like provisionEntraWindowsVM
   var winvmroutetablename = 'winvmroutetable'
   var winvmName = 'OPNSenseAdmin'
   var winvmnetworkSecurityGroupName = '${winvmName}-NSG'
@@ -150,7 +178,7 @@ module vnet 'SubTemplates/vnet/vnet.bicep' = {
   }
 }
 // Create OPNSense Public IP
-module publicip 'SubTemplates/vnet/publicip.bicep' = {
+module publicip 'SubTemplates/vnet/publicip.bicep' = if (provisionOPNSense) {
   name: publicIPAddressName
   params: {
     location: location
@@ -216,9 +244,30 @@ module nsgopnsense 'SubTemplates/vnet/nsg.bicep' = {
   }
 
 // Pull Existing Managed Identity for DC to Access Entra
-  resource dcPrincipal 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
+  // resource dcPrincipal 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
+  //   name: dcPrincipalName
+  // }
+  resource dcPrincipal 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
     name: dcPrincipalName
+    location: location
   }
+
+  resource dcSP 'Microsoft.Graph/servicePrincipals@v1.0' existing = {
+    appId: dcPrincipal.properties.principalId
+  }
+
+  resource graphSpn 'Microsoft.Graph/servicePrincipals@v1.0' existing = {
+    appId: '00000003-0000-0000-c000-000000000000'
+  }
+  var dcAppRoles = [
+    'User.Read.All'
+  ]
+  
+  resource dcPrincipalAppRole 'Microsoft.Graph/appRoleAssignedTo@beta' = [for appRole in dcAppRoles: {
+    principalId: dcSP.id
+    resourceId: graphSpn.id
+    appRoleId: (filter(graphSpn.appRoles, ar => ar.value == appRole)[0]).id
+  }]
 
 var _artifactsLocationSasToken = labSA.listServiceSas('2021-09-01', {
   canonicalizedResource: '/blob/${labSA.name}/bicep'
@@ -246,7 +295,7 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
   }
 
 // Create OPNsense TwoNics
-  module opnSenseTwoNics 'SubTemplates/VM/opnsense.bicep' = {
+  module opnSenseTwoNics 'SubTemplates/VM/opnsense.bicep' = if (provisionOPNSense){
     name: '${virtualMachineName}-TwoNics'
     params: {
       Location: location
@@ -256,8 +305,8 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
         OpnVersion: OpnVersion
         WALinuxVersion: WALinuxVersion
         OpnType: 'TwoNics'
-        TrustedSubnetName: '${virtualNetworkName}/${trustedSubnetName}'
-        WindowsSubnetName:  '${virtualNetworkName}/${windowsvmsubnetname}'
+        TrustedSubnetName: '${vnet.outputs.vnetName}/${trustedSubnetName}'
+        WindowsSubnetName:  '${vnet.outputs.vnetName}/${windowsvmsubnetname}'
         publicIPAddress: ''
         opnSenseSecondarytrustedNicIP: ''
       }
@@ -266,8 +315,8 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       TempPassword: localAdminPassword
       TempUsername: localAdminName
       multiNicSupport: true
-      trustedSubnetId: trustedSubnet.id
-      untrustedSubnetId: untrustedSubnet.id
+      trustedSubnetId: vnet.outputs.vnetSubnets[1].id
+      untrustedSubnetId: vnet.outputs.vnetSubnets[0].id
       virtualMachineName: virtualMachineName
       virtualMachineSize: virtualMachineSize
       publicIPId: publicip.outputs.publicipId
@@ -280,7 +329,10 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
     ]
   }
 
-// Windows11 Client Resources
+  // Windows11 Client2 Resources
+  // TODO: We need to provision this AFTER the DC is fully deployed
+  // TODO: We need to update the DNS settings on the VNet to point to the DC. Azure may give us issues iwth this.
+  // TODO: Need to write a powershell script to join the domain and reboot. Can we use creds in KV?
   module nsgwinvm 'SubTemplates/vnet/nsg.bicep' = {
     name: winvmnetworkSecurityGroupName
     params: {
@@ -336,6 +388,13 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
     ]
   }
 
+  resource opnSenseTrustedNic 'Microsoft.Network/networkInterfaces@2023-05-01' existing = if (!provisionOPNSense) {
+    name: '${virtualMachineName}-Trusted-NIC'
+  }
+  resource opnSenseUntrustedNic 'Microsoft.Network/networkInterfaces@2023-05-01' existing = if (!provisionOPNSense) {
+    name: '${virtualMachineName}-Untrusted-NIC'
+  }
+
   module winvmroutetable 'SubTemplates/vnet/routetable.bicep' = {
     name: winvmroutetablename
     params: {
@@ -354,7 +413,7 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       routeName: 'default'
       properties: {
         nextHopType: 'VirtualAppliance'
-        nextHopIpAddress:  opnSenseTwoNics.outputs.trustedNicIP
+        nextHopIpAddress:  (provisionOPNSense) ? opnSenseTwoNics.outputs.trustedNicIP : opnSenseTrustedNic.properties.ipConfigurations[0].properties.privateIPAddress
         addressPrefix: '0.0.0.0/0'
       }
     }
@@ -373,7 +432,7 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       TempPassword: localAdminPassword
       trustedSubnetId: windowsvmsubnet.id
       virtualMachineName: winvmName
-      virtualMachineSize: 'Standard_B2as_v2'
+      virtualMachineSize: virtualMachineSize
     }
     dependsOn: [
       nsgwinvm
@@ -381,6 +440,238 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
     ]
   }
 
+  // Windows11 AAD Joined Client Resources
+
+  module nsgwinvm2 'SubTemplates/vnet/nsg.bicep' = if(provisionEntraWindowsVM.provision) {
+    name: '${namePrefix}-${provisionEntraWindowsVM.nameSuffix}-nsg'
+    params: {
+      Location: location
+      nsgName: '${namePrefix}-${provisionEntraWindowsVM.nameSuffix}-nsg'
+      securityRules: [
+        {
+          // TODO: Fix IP Address
+          name: 'RDP'
+          properties: {
+            priority: 4096
+            sourceAddressPrefix: '*'
+            protocol: 'Tcp'
+            destinationPortRange: '3389'
+            access: 'Allow'
+            direction: 'Inbound'
+            sourcePortRange: '*'
+            destinationAddressPrefix: '*'
+          }
+        }
+        {
+          name: 'Out-Any'
+          properties: {
+            priority: 4096
+            sourceAddressPrefix: '*'
+            protocol: '*'
+            destinationPortRange: '*'
+            access: 'Allow'
+            direction: 'Outbound'
+            sourcePortRange: '*'
+            destinationAddressPrefix: '*'
+          }
+        }
+      ]
+    }
+  }
+
+  module winvmpublicip2 'SubTemplates/vnet/publicip.bicep' = if(provisionEntraWindowsVM.provision) {
+    name: '${namePrefix}-${provisionEntraWindowsVM.nameSuffix}-pip'
+    params: {
+      location: location
+      publicipName: '${namePrefix}-${provisionEntraWindowsVM.nameSuffix}-pip'
+      publicipproperties: {
+        publicIPAllocationMethod: 'Static'
+      }
+      publicipsku: {
+        name: PublicIPAddressSku
+        tier: 'Regional'
+      }
+    }
+    dependsOn: [
+      vnet
+    ]
+  }
+
+  module winvm2 'SubTemplates/VM/windows11-vm.bicep' = if(provisionEntraWindowsVM.provision) {
+    name: '${namePrefix}-${provisionEntraWindowsVM.nameSuffix}'
+    params: {
+      Location: location
+      nsgId: nsgwinvm.outputs.nsgID
+      publicIPId: winvmpublicip2.outputs.publicipId
+      TempUsername: localAdminName
+      TempPassword: localAdminPassword
+      trustedSubnetId: windowsvmsubnet.id
+      virtualMachineName: '${namePrefix}-${provisionEntraWindowsVM.nameSuffix}'
+      virtualMachineSize: virtualMachineSize
+    }
+    dependsOn: [
+      nsgwinvm2
+      winvmpublicip2
+    ]
+  }
+// Get SQL Group
+  //resource sqlAdminGroup 'Microsoft.Graph/groups@v1.0' existing = if(azSQL.groupExisting) {
+  //  uniqueName: azSQL.adminGroupName
+  //}
+  resource sqlAdminGroup 'Microsoft.Graph/groups@v1.0' = {
+    displayName: azSQL.adminGroupName
+    mailEnabled: false
+    mailNickname: azSQL.adminGroupName
+    securityEnabled: true
+    uniqueName: azSQL.adminGroupName
+  }
+
+// Create Azure SQL Server
+  resource sqlServer 'Microsoft.Sql/servers@2023-08-01-preview' = {
+    name: '${namePrefix}-sql01'
+    location: location
+    identity: {
+      type: 'SystemAssigned'
+    }
+    properties: {
+      administrators:{
+        administratorType: 'ActiveDirectory'
+        azureADOnlyAuthentication: true
+        login: AzAdminName
+        principalType: 'Group'
+        tenantId: subscription().tenantId
+        sid: sqlAdminGroup.id
+      }
+      version: '12.0'
+    }
+  }
+  
+  resource sqlDB 'Microsoft.Sql/servers/databases@2023-08-01-preview' = if(azSQL.provision) {
+    parent: sqlServer
+    name: '${namePrefix}-sqldb01'
+    location: location
+    sku: {
+      name: 'S0'
+      tier: 'Standard'
+    }
+  }
+  // Create Intune DB
+  resource intuneCDDB 'Microsoft.Sql/servers/databases@2023-08-01-preview' = if(intune.provision) {
+    parent: sqlServer
+    name: '${namePrefix}-IntuneCDDB'
+    location: location
+    sku: {
+      name: 'S0'
+      tier: 'Standard'
+    }
+  }
+  // TODO: Create Intune CD Webapp
+  resource intuneEntraApp 'Microsoft.Graph/applications@v1.0' = {
+    displayName: '${namePrefix}-IntuneCD'
+    signInAudience: 'AzureADMultipleOrgs'
+    uniqueName: '${namePrefix}-IntuneCD'
+    web: {
+      redirectUris: [
+        'https://${namePrefix}IntuneCD.azurewebsites.net/auth/signin-oidc'
+        'https://${namePrefix}IntuneCD.azurewebsites.net/tenants'
+      ]
+    }
+    passwordCredentials: [
+      {
+        displayName: '${namePrefix}-IntuneCD'
+        endDateTime: '2099-12-31T23:59:59Z'
+      }
+    ]
+    appRoles: [
+      {
+        allowedMemberTypes: [
+          'User'
+        ]
+        description: 'Administrator access to IntuneCD'
+        displayName: 'Administrators'
+        id: 'd1c2ade8-98f8-45fd-aa4a-6d06b947c66f'
+        isEnabled: true
+        value: 'intunecd_admin'
+      }
+    ]
+    requiredResourceAccess: [
+      {
+        resourceAppId: '00000003-0000-0000-c000-000000000000'
+        resourceAccess: [
+         // DeviceManagementApps.ReadWrite.All
+          {id: '78145de6-330d-4800-a6ce-494ff2d33d07', type: 'Role'}
+         // DeviceManagementConfiguration.ReadWrite.All
+          {id: '9241abd9-d0e6-425a-bd4f-47ba86e767a4', type: 'Role'}
+         // DeviceManagementServiceConfig.ReadWrite.All
+          {id: '5ac13192-7ace-4fcf-b828-1a26f28068ee', type: 'Role'}
+         // DeviceManagementRBAC.ReadWrite.All
+         {id: 'e330c4f0-4170-414e-a55a-2f022ec2b57b', type: 'Role'}
+          // Group.ReadWrite.All
+          {id: '62a82d76-70ea-41e2-9197-370581804d09', type: 'Role'}
+          // Policy.Read.All
+          {id: '246dd0d5-5bd0-4def-940b-0421030a5b68', type: 'Role'}
+          // Policy.ReadWrite.ConditionalAccess
+          {id: '01c0a623-fc9b-48e9-b794-0756f8e8f067', type: 'Role'}
+          // Application
+          {id: '9a5d68dd-52b0-4cc2-bd40-abcf44ac3a30', type: 'Role'}
+          // Policy.ReadWrite.AuthenticationFlows
+          {id: '25f85f3c-f66c-4205-8cd5-de92dd7f0cec', type: 'Role'}
+          // Policy.ReadWrite.AuthenticationMethod
+          {id: '29c18626-4985-4dcd-85c0-193eef327366', type: 'Role'}
+          // Policy.ReadWrite.Authorization
+          {id: 'fb221be6-99f2-473f-bd32-01c6a0e9ca3b', type: 'Role'}
+          // Policy.ReadWrite.ExternalIdentities
+          {id: '03cc4f92-788e-4ede-b93f-199424d144a5', type: 'Role'}
+          // Policy.ReadWrite.ExternalIdentities
+          {id: '1c6e93a6-28e2-4cbb-9f64-1a46a821124d', type: 'Role'}
+          // Policy.ReadWrite.DeviceConfiguration might also be needed, but it's Delegated only?
+       ]
+      }
+    ]
+  }
+  resource intuneEntraSP 'Microsoft.Graph/servicePrincipals@v1.0' = {
+    appId: intuneEntraApp.id
+  }
+  resource intuneKVRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (provisionSentinel) {
+    name: guid(resourceGroup().id, '${namePrefix}-IntuneCD', '00482a5a-887f-4fb3-b363-3b7fe8e74483')
+    scope: resourceGroup()
+    properties: {
+      principalId: intuneEntraSP.id
+      principalType: 'ServicePrincipal'
+      roleDefinitionId: '00482a5a-887f-4fb3-b363-3b7fe8e74483'
+    }
+  }
+
+  resource intuneCDWebServer 'Microsoft.Web/serverfarms@2023-12-01' = {
+    name: '${namePrefix}-IntuneCD'
+    location: location
+    kind: 'app,linux'
+    properties: {
+      reserved: true
+      targetWorkerSizeId: 0
+      targetWorkerCount: 1
+    }
+    sku: {
+      name: 'B1'
+    }
+  }
+
+  module intuneWebApp 'SubTemplates/intune/IntuneWebApp.bicep' = {
+    name: '${namePrefix}-IntuneCD'
+    params: {
+      dbadmin: localAdminName
+      dbadminpass: localAdminPassword
+      dbname: intuneCDDB.name
+      farmId: intuneCDWebServer.id
+      keyvault: keyVault
+      location: location
+      name: '${namePrefix}-IntuneCD'
+      tz: 'America/Denver'
+      url: 'https://${namePrefix}IntuneCD.azurewebsites.net'
+      webappClientId: intuneEntraApp.appId
+      webappClientSecret: intuneEntraApp.passwordCredentials[0].secretText
+    }
+  }
 // Create Storage Account
   resource labSA 'Microsoft.Storage/storageAccounts@2021-09-01' = {
     name: storageAccountName
@@ -536,6 +827,23 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
 // TODO: Maybe just have to do it on NICs for future VMS?
 
 // Deploy Log Analytics and Sentinel
+  resource sentinelPrincipal 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = if (provisionSentinel) {
+    name: '${namePrefix}-sentinelId1'
+    location: location
+  }
+  resource sentinelContribRoleDef 'Microsoft.Authorization/roleDefinitions@2022-04-01' existing = if (provisionSentinel) {
+    scope: subscription()
+    name: 'ab8e14d6-4a74-4a29-9ba8-549422addade'
+  }
+  resource sentinelPrincipalContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (provisionSentinel) {
+    name: guid(resourceGroup().id, sentinelPrincipal.name, sentinelContribRoleDef.id)
+    scope: resourceGroup()
+    properties: {
+      principalId: sentinelPrincipal.properties.principalId
+      principalType: 'ServicePrincipal'
+      roleDefinitionId: sentinelContribRoleDef.id
+    }
+  }
   resource logAnalyticsWorkspace 'Microsoft.OperationalInsights/workspaces@2020-10-01' = if (provisionSentinel) {
     name: lawName
     location: location
@@ -563,34 +871,55 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       promotionCode: ''
     }
   }
+  resource sentinelDeploymentScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = if (provisionSentinel) {
+    name: 'SentinelDeploymentScript'
+    location: location
+    kind: 'AzurePowerShell'
+    identity: {
+      type: 'UserAssigned'
+      userAssignedIdentities: {
+        '${sentinelPrincipal.id}': {}
+      }
+    }
+    properties: {
+      retentionInterval: 'PT1H'
+      arguments: ' -resourceGroupName ${resourceGroup().name} -workspaceName ${logAnalyticsWorkspace.name} -subscriptionId ${subscription().subscriptionId} -managedidentityclientid ${sentinelPrincipal.properties.clientId}'
+      azPowerShellVersion: '9.7'
+      scriptContent: loadTextContent('./Scripts/SentinelSetup.ps1')
+    }
+    dependsOn: [
+      sentinelPrincipalContributor
+      sentinel
+    ]
+  }
 
 // Deploy App Gallery
-var appGalleryname = '${namePrefix}_AppGallery1'
-module appGallery 'SubTemplates/vmapps/gallery.bicep' = {
-  name: appGalleryname
-  params: {
-    location: location
-    galleryName: appGalleryname
+  var appGalleryname = '${namePrefix}_AppGallery1'
+  module appGallery 'SubTemplates/vmapps/gallery.bicep' = {
+    name: appGalleryname
+    params: {
+      location: location
+      galleryName: appGalleryname
+    }
   }
-}
 // TODO: Deploy Cloud Sync in App Gallery
-var sas_url = '${labSA.properties.primaryEndpoints.blob}${containerName}/AADConnectProvisioningAgentSetup.exe?${_appsSasToken}'
-module cloudSyncApp 'SubTemplates/vmapps/application.bicep' = if (provisionDC) {
-  name: 'CloudSync'
-  params: {
-    location: location
-    galleryName: appGalleryname
-    appName: 'CloudSync'
-    fileURI: sas_url
-    installCommand: '.\\AADConnectProvisioningAgentSetup.exe /quiet /norestart'
-    uninstallCommand: 'uninstall.exe'
+  var sas_url = '${labSA.properties.primaryEndpoints.blob}${containerName}/AADConnectProvisioningAgentSetup.exe?${_appsSasToken}'
+  module cloudSyncApp 'SubTemplates/vmapps/application.bicep' = if (provisionDC) {
+    name: 'CloudSync'
+    params: {
+      location: location
+      galleryName: appGalleryname
+      appName: 'CloudSync'
+      fileURI: sas_url
+      installCommand: '.\\AADConnectProvisioningAgentSetup.exe /quiet /norestart'
+      uninstallCommand: 'uninstall.exe'
+    }
+    dependsOn: [
+      appGallery
+      AADCAgentBlob
+    ]
   }
-  dependsOn: [
-    appGallery
-    AADCAgentBlob
-  ]
-}
-//Key Vault and Secrets
+// Key Vault and Secrets
   module keyVault 'SubTemplates/accessories/keyvault.bicep' = {
     name: '${namePrefix}-kv1'
     params: {
@@ -654,6 +983,7 @@ module cloudSyncApp 'SubTemplates/vmapps/application.bicep' = if (provisionDC) {
       saPrincipal
     ]
   }
+
 
 output workspaceId string = logAnalyticsWorkspace.id
 output workspaceName string = logAnalyticsWorkspace.name
