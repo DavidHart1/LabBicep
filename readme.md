@@ -8,6 +8,8 @@ LabBicep is a series of bicep templates to automatically deploy a lab environmen
 It deploys:
 - VNet with 2 subnets
 - OPNSense as a firewall
+- Azure SQL database for Purview
+- IntuneCD Monitor for Intune CICD Management
 - Windows 11 VM w/ public IP to do post-install configuration of resources
 - Route tables directing VM traffic through OPNSense
 - Domain Controller
@@ -29,15 +31,16 @@ Compile DSC files (if needed)
 2. `Import-Module Az`
 3. `Publish-AzVMDscConfiguration .\Scripts\ConfigureDC.ps1 -OutputArchivePath .\ConfigureDC.zip`
 
-If you plan to provision the OPNSense firewall, you will need to accept the FreeBSD license terms using the following command: `az vm image terms accept --publisher "thefreebsdfoundation" --offer "freebsd-13_1" --plan "13_1-release"`
+If you plan to provision the OPNSense firewall, you will need to accept the FreeBSD license terms using the following command: `az vm image terms accept --publisher "thefreebsdfoundation" --offer "freebsd-13_2" --plan "13_2-release"`
 
-If you plan to provision a domain controller, you will need to pre-provision a user-assigned managed identity, and grant it User.Read.All (preferably using a custom Entra role)
+The deployment will automatically deploy the service principal for a DC if enabled, and will assign it permissions to the Graph API using the experimental graph extension. Therefore, you must run this from az bicep cli, NOT from vscode directly.
 
 Create Bicep param file and populate with required parameters.
 
 ## Usage
 
-Instructions on how to use the project and any relevant examples.
+Deploy with az cli. Example:
+az deployment group create --resource-group test-azure --template-file azuredeploy.bicep -parameters azuredeploy.bicepparram 
 
 ## Contributing
 
