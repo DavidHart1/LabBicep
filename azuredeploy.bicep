@@ -1,4 +1,4 @@
-provider microsoftGraph
+extension microsoftGraph
 
 @minLength(5)
 @maxLength(15)
@@ -71,6 +71,13 @@ var dcVMName = '${namePrefix}-DC01'
 param dcForestName string
 
 // Network Params
+  param virtualNetwork {
+    provisionNew: bool
+    containerSubnet: {
+      name: string
+      addressPrefix: string
+    }
+  }
   param virtualNetworkName string = 'HLA-HubNet'
   @sys.description('Virtual Network Address Space. Only required if you want to create a new VNet.')
   param VNETAddress array = [
@@ -110,7 +117,7 @@ param dcForestName string
   @sys.description('OPNSense VM size, please choose a size which allow 2 NICs.')
   param virtualMachineSize string = 'Standard_B2s'
   // OPNSense Mgmt Machine Params/Vars
-  // TODO: Change this to another object param like provisionEntraWindowsVM
+  // TODO: Change this to another object param like provision EntraWindowsVM
   var winvmroutetablename = 'winvmroutetable'
   var winvmName = 'OPNSenseAdmin'
   var winvmnetworkSecurityGroupName = '${winvmName}-NSG'
@@ -166,6 +173,28 @@ module vnet 'SubTemplates/vnet/vnet.bicep' = {
         name: windowsvmsubnetname
         properties: {
           addressPrefix: DeployWindowsSubnet
+        }
+      }
+      {
+        name: virtualNetwork.containerSubnet.name
+        properties: {
+          addressPrefix: virtualNetwork.containerSubnet.addressPrefix
+          delegations: [
+            {
+              name: 'Microsoft.ContainerInstance/containerGroups'
+              properties: {
+                serviceName: 'Microsoft.ContainerInstance/containerGroups'
+              }
+            }
+          ]
+          serviceEndpoints: [
+            {
+              service: 'Microsoft.KeyVault'
+              locations: [
+                '${location}'
+              ]
+            }
+          ]
         }
       }
       {
@@ -231,43 +260,50 @@ module nsgopnsense 'SubTemplates/vnet/nsg.bicep' = {
 }
 
 // Build reference of existing subnets
-  resource untrustedSubnet 'Microsoft.Network/virtualNetworks/subnets@2023-05-01' existing = {
+  resource untrustedSubnet 'Microsoft.Network/virtualNetworks/subnets@2023-05-01' existing = if(!virtualNetwork.provisionNew) {
     name: '${virtualNetworkName}/${untrustedSubnetName}'
   }
 
-  resource trustedSubnet 'Microsoft.Network/virtualNetworks/subnets@2023-05-01' existing = {
+  resource trustedSubnet 'Microsoft.Network/virtualNetworks/subnets@2023-05-01' existing = if(!virtualNetwork.provisionNew) {
     name: '${virtualNetworkName}/${trustedSubnetName}'
   }
 
-  resource windowsvmsubnet 'Microsoft.Network/virtualNetworks/subnets@2023-05-01' existing =  {
+  resource windowsvmsubnet 'Microsoft.Network/virtualNetworks/subnets@2023-05-01' existing = if(!virtualNetwork.provisionNew) {
     name: '${virtualNetworkName}/${windowsvmsubnetname}'
+  }
+  resource containerSubnet 'Microsoft.Network/virtualNetworks/subnets@2023-05-01' existing = if(!virtualNetwork.provisionNew) {
+    name: '${virtualNetworkName}/${virtualNetwork.containerSubnet.name}'
   }
 
 // Pull Existing Managed Identity for DC to Access Entra
-  // resource dcPrincipal 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
-  //   name: dcPrincipalName
-  // }
+
   resource dcPrincipal 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
     name: dcPrincipalName
     location: location
   }
 
-  resource dcSP 'Microsoft.Graph/servicePrincipals@v1.0' existing = {
-    appId: dcPrincipal.properties.principalId
+  module dcPrincipalAppRole 'SubTemplates/accessories/AppRole.bicep' = {
+    name: '${dcPrincipalName}-AppRoles'
+    params: {
+      principalName: dcPrincipalName
+      //resourceAppId: '00000003-0000-0000-c000-000000000000'
+      appRoles: [
+        'User.Read.All'
+        'Application.ReadWrite.All'
+        'AuditLog.Read.All'
+        'AuditLogsQuery.Read.All'
+        'AuthenticationContext.ReadWrite.All'
+        'Directory.ReadWrite.All'
+        'Domain.ReadWrite.All'
+        'OnPremisesPublishingProfiles.ReadWrite.All'
+        'OnPremDirectorySynchronization.ReadWrite.All'
+        'ServicePrincipalEndpoint.ReadWrite.All'
+      ]
+    }
+    dependsOn: [
+      dcPrincipal
+    ]
   }
-
-  resource graphSpn 'Microsoft.Graph/servicePrincipals@v1.0' existing = {
-    appId: '00000003-0000-0000-c000-000000000000'
-  }
-  var dcAppRoles = [
-    'User.Read.All'
-  ]
-  
-  resource dcPrincipalAppRole 'Microsoft.Graph/appRoleAssignedTo@beta' = [for appRole in dcAppRoles: {
-    principalId: dcSP.id
-    resourceId: graphSpn.id
-    appRoleId: (filter(graphSpn.appRoles, ar => ar.value == appRole)[0]).id
-  }]
 
 var _artifactsLocationSasToken = labSA.listServiceSas('2021-09-01', {
   canonicalizedResource: '/blob/${labSA.name}/bicep'
@@ -315,8 +351,8 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       TempPassword: localAdminPassword
       TempUsername: localAdminName
       multiNicSupport: true
-      trustedSubnetId: vnet.outputs.vnetSubnets[1].id
-      untrustedSubnetId: vnet.outputs.vnetSubnets[0].id
+      trustedSubnetId: (!virtualNetwork.provisionNew) ? vnet.outputs.vnetSubnets[1].id : trustedSubnet.id
+      untrustedSubnetId: (!virtualNetwork.provisionNew) ? vnet.outputs.vnetSubnets[0].id : untrustedSubnet.id
       virtualMachineName: virtualMachineName
       virtualMachineSize: virtualMachineSize
       publicIPId: publicip.outputs.publicipId
@@ -325,7 +361,6 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
     dependsOn: [
       vnet
       nsgopnsense
-      trustedSubnet
     ]
   }
 
@@ -371,7 +406,7 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
   }
 
   module winvmpublicip 'SubTemplates/vnet/publicip.bicep' = {
-    name: winvmpublicipName
+    name: '${deployment().name}-${winvmpublicipName}'
     params: {
       location: location
       publicipName: winvmpublicipName
@@ -391,12 +426,12 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
   resource opnSenseTrustedNic 'Microsoft.Network/networkInterfaces@2023-05-01' existing = if (!provisionOPNSense) {
     name: '${virtualMachineName}-Trusted-NIC'
   }
-  resource opnSenseUntrustedNic 'Microsoft.Network/networkInterfaces@2023-05-01' existing = if (!provisionOPNSense) {
-    name: '${virtualMachineName}-Untrusted-NIC'
-  }
+  // resource opnSenseUntrustedNic 'Microsoft.Network/networkInterfaces@2023-05-01' existing = if (!provisionOPNSense) {
+  //   name: '${virtualMachineName}-Untrusted-NIC'
+  // }
 
   module winvmroutetable 'SubTemplates/vnet/routetable.bicep' = {
-    name: winvmroutetablename
+    name: '${deployment().name}-${winvmroutetablename}'
     params: {
       location: location
       rtName: winvmroutetablename
@@ -423,14 +458,14 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
   }
 
   module winvm 'SubTemplates/VM/windows11-vm.bicep' = {
-    name: winvmName
+    name: '${deployment().name}-${winvmName}'
     params: {
       Location: location
       nsgId: nsgwinvm.outputs.nsgID
       publicIPId: winvmpublicip.outputs.publicipId
       TempUsername: localAdminName
       TempPassword: localAdminPassword
-      trustedSubnetId: windowsvmsubnet.id
+      trustedSubnetId: (!virtualNetwork.provisionNew) ? vnet.outputs.vnetSubnets[2].id : windowsvmsubnet.id
       virtualMachineName: winvmName
       virtualMachineSize: virtualMachineSize
     }
@@ -480,7 +515,7 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
   }
 
   module winvmpublicip2 'SubTemplates/vnet/publicip.bicep' = if(provisionEntraWindowsVM.provision) {
-    name: '${namePrefix}-${provisionEntraWindowsVM.nameSuffix}-pip'
+    name: '${deployment().name}-${namePrefix}-${provisionEntraWindowsVM.nameSuffix}-pip'
     params: {
       location: location
       publicipName: '${namePrefix}-${provisionEntraWindowsVM.nameSuffix}-pip'
@@ -498,14 +533,14 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
   }
 
   module winvm2 'SubTemplates/VM/windows11-vm.bicep' = if(provisionEntraWindowsVM.provision) {
-    name: '${namePrefix}-${provisionEntraWindowsVM.nameSuffix}'
+    name: '${deployment().name}-${namePrefix}-${provisionEntraWindowsVM.nameSuffix}'
     params: {
       Location: location
       nsgId: nsgwinvm.outputs.nsgID
       publicIPId: winvmpublicip2.outputs.publicipId
       TempUsername: localAdminName
       TempPassword: localAdminPassword
-      trustedSubnetId: windowsvmsubnet.id
+      trustedSubnetId: (!virtualNetwork.provisionNew) ? vnet.outputs.vnetSubnets[2].id : windowsvmsubnet.id
       virtualMachineName: '${namePrefix}-${provisionEntraWindowsVM.nameSuffix}'
       virtualMachineSize: virtualMachineSize
     }
@@ -518,12 +553,11 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
   //resource sqlAdminGroup 'Microsoft.Graph/groups@v1.0' existing = if(azSQL.groupExisting) {
   //  uniqueName: azSQL.adminGroupName
   //}
-  resource sqlAdminGroup 'Microsoft.Graph/groups@v1.0' = {
-    displayName: azSQL.adminGroupName
-    mailEnabled: false
-    mailNickname: azSQL.adminGroupName
-    securityEnabled: true
-    uniqueName: azSQL.adminGroupName
+  module sqlAdminGroup 'SubTemplates/accessories/EntraGroup.bicep' = {
+    name: '${deployment().name}-${azSQL.adminGroupName}'
+    params: {
+      groupName: azSQL.adminGroupName
+    }
   }
 
 // Create Azure SQL Server
@@ -534,13 +568,15 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       type: 'SystemAssigned'
     }
     properties: {
+      administratorLogin: localAdminName
+      administratorLoginPassword: localAdminPassword
       administrators:{
         administratorType: 'ActiveDirectory'
-        azureADOnlyAuthentication: true
+        azureADOnlyAuthentication: false
         login: AzAdminName
         principalType: 'Group'
         tenantId: subscription().tenantId
-        sid: sqlAdminGroup.id
+        sid: sqlAdminGroup.outputs.groupSid
       }
       version: '12.0'
     }
@@ -564,86 +600,111 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       name: 'S0'
       tier: 'Standard'
     }
+    properties: {
+      collation: 'SQL_Latin1_General_CP1_CI_AS'
+    }
   }
   // TODO: Create Intune CD Webapp
-  resource intuneEntraApp 'Microsoft.Graph/applications@v1.0' = {
-    displayName: '${namePrefix}-IntuneCD'
-    signInAudience: 'AzureADMultipleOrgs'
-    uniqueName: '${namePrefix}-IntuneCD'
-    web: {
-      redirectUris: [
-        'https://${namePrefix}IntuneCD.azurewebsites.net/auth/signin-oidc'
-        'https://${namePrefix}IntuneCD.azurewebsites.net/tenants'
+  resource kvAdminPrincipal 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+    name: '${namePrefix}-kvPrincipal1'
+    location: location
+  }
+  resource scriptKVRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+    name: guid(kv.id, '${namePrefix}-kvadmin', kvAdminRoleDef.id)
+    scope: kv
+    properties: {
+      principalId: kvAdminPrincipal.properties.principalId
+      principalType: 'ServicePrincipal'
+      roleDefinitionId: kvAdminRoleDef.id
+    }
+    dependsOn: [
+      keyVault
+    ]
+  }
+  resource storageDataPrivRoleDef 'Microsoft.Authorization/roleDefinitions@2022-04-01' existing = {
+    scope: subscription()
+    name: '69566ab7-960f-475b-8e7c-b3118f30c6bd'
+  }
+  resource scriptSAContribRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+    name: guid(labSA.id, kvAdminPrincipal.name, storageDataPrivRoleDef.id)
+    scope: labSA
+    properties: {
+      principalId: kvAdminPrincipal.properties.principalId
+      principalType: 'ServicePrincipal'
+      roleDefinitionId: storageDataPrivRoleDef.id
+    }
+  }
+  module scriptAppRWRole './SubTemplates/accessories/AppRole.bicep' = {
+    name: '${deployment().name}-scriptAppRWRole'
+    params: {
+      principalName: kvAdminPrincipal.name
+      appRoles: [
+        'Application.ReadWrite.All'
       ]
     }
-    passwordCredentials: [
-      {
-        displayName: '${namePrefix}-IntuneCD'
-        endDateTime: '2099-12-31T23:59:59Z'
-      }
-    ]
-    appRoles: [
-      {
-        allowedMemberTypes: [
-          'User'
-        ]
-        description: 'Administrator access to IntuneCD'
-        displayName: 'Administrators'
-        id: 'd1c2ade8-98f8-45fd-aa4a-6d06b947c66f'
-        isEnabled: true
-        value: 'intunecd_admin'
-      }
-    ]
-    requiredResourceAccess: [
-      {
-        resourceAppId: '00000003-0000-0000-c000-000000000000'
-        resourceAccess: [
-         // DeviceManagementApps.ReadWrite.All
-          {id: '78145de6-330d-4800-a6ce-494ff2d33d07', type: 'Role'}
-         // DeviceManagementConfiguration.ReadWrite.All
-          {id: '9241abd9-d0e6-425a-bd4f-47ba86e767a4', type: 'Role'}
-         // DeviceManagementServiceConfig.ReadWrite.All
-          {id: '5ac13192-7ace-4fcf-b828-1a26f28068ee', type: 'Role'}
-         // DeviceManagementRBAC.ReadWrite.All
-         {id: 'e330c4f0-4170-414e-a55a-2f022ec2b57b', type: 'Role'}
-          // Group.ReadWrite.All
-          {id: '62a82d76-70ea-41e2-9197-370581804d09', type: 'Role'}
-          // Policy.Read.All
-          {id: '246dd0d5-5bd0-4def-940b-0421030a5b68', type: 'Role'}
-          // Policy.ReadWrite.ConditionalAccess
-          {id: '01c0a623-fc9b-48e9-b794-0756f8e8f067', type: 'Role'}
-          // Application
-          {id: '9a5d68dd-52b0-4cc2-bd40-abcf44ac3a30', type: 'Role'}
-          // Policy.ReadWrite.AuthenticationFlows
-          {id: '25f85f3c-f66c-4205-8cd5-de92dd7f0cec', type: 'Role'}
-          // Policy.ReadWrite.AuthenticationMethod
-          {id: '29c18626-4985-4dcd-85c0-193eef327366', type: 'Role'}
-          // Policy.ReadWrite.Authorization
-          {id: 'fb221be6-99f2-473f-bd32-01c6a0e9ca3b', type: 'Role'}
-          // Policy.ReadWrite.ExternalIdentities
-          {id: '03cc4f92-788e-4ede-b93f-199424d144a5', type: 'Role'}
-          // Policy.ReadWrite.ExternalIdentities
-          {id: '1c6e93a6-28e2-4cbb-9f64-1a46a821124d', type: 'Role'}
-          // Policy.ReadWrite.DeviceConfiguration might also be needed, but it's Delegated only?
-       ]
-      }
-    ]
   }
-  resource intuneEntraSP 'Microsoft.Graph/servicePrincipals@v1.0' = {
-    appId: intuneEntraApp.id
-  }
-  resource intuneKVRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (provisionSentinel) {
-    name: guid(resourceGroup().id, '${namePrefix}-IntuneCD', '00482a5a-887f-4fb3-b363-3b7fe8e74483')
-    scope: resourceGroup()
-    properties: {
-      principalId: intuneEntraSP.id
-      principalType: 'ServicePrincipal'
-      roleDefinitionId: '00482a5a-887f-4fb3-b363-3b7fe8e74483'
+  resource intuneAppPassScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
+    name: 'DeploymentScript-CreateIntuneAppPassword'
+    location: location
+    kind: 'AzurePowerShell'
+    identity: {
+      type: 'UserAssigned'
+      userAssignedIdentities: {
+        '${kvAdminPrincipal.id}': {}
+      }
     }
+    properties: {
+      retentionInterval: 'PT1H'
+      arguments: ' -applicationId ${intuneEntraApp.outputs.appObjectId} -identityId ${kvAdminPrincipal.properties.clientId} -vaultName ${keyVault.outputs.keyVaultName}'
+      azPowerShellVersion: '12.1'
+      scriptContent: loadTextContent('./Scripts/IntuneAppPassword.ps1')
+      storageAccountSettings: {
+        storageAccountName: labSA.name
+      }
+      containerSettings: {
+        subnetIds: [
+          {
+            id: (!virtualNetwork.provisionNew) ? vnet.outputs.vnetSubnets[3].id : containerSubnet.id
+          }
+        ]
+      }
+    }
+    dependsOn: [
+      keyVault
+      intuneEntraApp
+      scriptAppRWRole
+    ]
+  }
+  module intuneEntraApp 'SubTemplates/intune/IntuneCD.bicep' = {
+    name: '${deployment().name}-${namePrefix}-IntuneCDEntraApp'
+    params: {
+      namePrefix: namePrefix
+    }
+    dependsOn: [
+    ]
+  }
+
+  resource kvAdminRoleDef 'Microsoft.Authorization/roleDefinitions@2022-04-01' existing = {
+    scope: subscription()
+    name: '00482a5a-887f-4fb3-b363-3b7fe8e74483'
+  }
+
+  resource intuneKVRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+    name: guid(kv.id, '${namePrefix}-IntuneCD', kvAdminRoleDef.id)
+    scope: kv
+    properties: {
+      principalId: intuneEntraApp.outputs.spId
+      principalType: 'ServicePrincipal'
+      roleDefinitionId: kvAdminRoleDef.id
+    }
+    dependsOn: [
+      keyVault
+      intuneEntraApp
+    ]
   }
 
   resource intuneCDWebServer 'Microsoft.Web/serverfarms@2023-12-01' = {
-    name: '${namePrefix}-IntuneCD'
+    name: '${namePrefix}-IntuneCDFarm'
     location: location
     kind: 'app,linux'
     properties: {
@@ -655,22 +716,26 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       name: 'B1'
     }
   }
-
   module intuneWebApp 'SubTemplates/intune/IntuneWebApp.bicep' = {
-    name: '${namePrefix}-IntuneCD'
+    name: '${deployment().name}-${namePrefix}-IntuneCDWebApp'
     params: {
       dbadmin: localAdminName
       dbadminpass: localAdminPassword
       dbname: intuneCDDB.name
       farmId: intuneCDWebServer.id
-      keyvault: keyVault
+      keyvault: keyVault.outputs.keyVaultObject
       location: location
       name: '${namePrefix}-IntuneCD'
       tz: 'America/Denver'
-      url: 'https://${namePrefix}IntuneCD.azurewebsites.net'
-      webappClientId: intuneEntraApp.appId
-      webappClientSecret: intuneEntraApp.passwordCredentials[0].secretText
+      url: 'https://${namePrefix}-IntuneCD.azurewebsites.net'
+      webappClientId: intuneEntraApp.outputs.appId
+      webappClientSecret: kv.getSecret('IntuneCDSecret')
     }
+    dependsOn: [
+      keyVault
+      intuneEntraApp
+      intuneAppPassScript
+    ]
   }
 // Create Storage Account
   resource labSA 'Microsoft.Storage/storageAccounts@2021-09-01' = {
@@ -737,6 +802,20 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       saPrincipalBlobContributor
     ]
   }
+  module EntraNetworkBlob 'SubTemplates/accessories/CopyFile.bicep' = if(provisionDC) {
+    name: 'EntraPNCBlob'
+    scope: resourceGroup()
+    params: {
+      filename: 'MicrosoftEntraPrivateNetworkConnectorInstaller.exe'
+      identityId: saPrincipal.outputs.principalResource
+      location: location
+      storageAccountName: labSA.name
+      sourceFileUri: 'https://github.com/HartD92/LabBicepArtifacts/raw/main/Blobs/MicrosoftEntraPrivateNetworkConnectorInstaller.exe'
+    }
+    dependsOn: [
+      saPrincipalBlobContributor
+    ]
+  }
   module AADSetupBlob 'SubTemplates/accessories/CopyFile.bicep' = if(provisionDC) {
     name: 'AADSetupBlob'
     scope: resourceGroup()
@@ -787,7 +866,7 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
     params: {
       location: location
       networkInterfaceName: '${dcVMName}-nic1'
-      subnetRef: trustedSubnet.id
+      subnetRef: (!virtualNetwork.provisionNew) ? vnet.outputs.vnetSubnets[1].id : trustedSubnet.id
       virtualMachineName: dcVMName
       virtualMachineComputerName: dcVMName
       virtualMachineSize: virtualMachineSize
@@ -795,6 +874,7 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       adminPassword: localAdminPassword
       identityName: dcPrincipalName
       CloudSyncAppId: cloudSyncApp.outputs.appReference
+      EntraPNCAppId: EntraPNCApp.outputs.appReference
       forestName: dcForestName
       dscConfigScriptName: 'ConfigureDC.ps1'
       dscConfigScriptSASToken: _artifactsLocationSasToken
@@ -902,15 +982,14 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       galleryName: appGalleryname
     }
   }
-// TODO: Deploy Cloud Sync in App Gallery
-  var sas_url = '${labSA.properties.primaryEndpoints.blob}${containerName}/AADConnectProvisioningAgentSetup.exe?${_appsSasToken}'
+// Deploy Cloud Sync in App Gallery
   module cloudSyncApp 'SubTemplates/vmapps/application.bicep' = if (provisionDC) {
     name: 'CloudSync'
     params: {
       location: location
       galleryName: appGalleryname
       appName: 'CloudSync'
-      fileURI: sas_url
+      fileURI: '${labSA.properties.primaryEndpoints.blob}${containerName}/AADConnectProvisioningAgentSetup.exe?${_appsSasToken}'
       installCommand: '.\\AADConnectProvisioningAgentSetup.exe /quiet /norestart'
       uninstallCommand: 'uninstall.exe'
     }
@@ -919,7 +998,29 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       AADCAgentBlob
     ]
   }
+  module EntraPNCApp 'SubTemplates/vmapps/application.bicep' = if (provisionDC) {
+    name: 'EntraPNC'
+    params: {
+      location: location
+      galleryName: appGalleryname
+      appName: 'EntraPrivateNetworkConnector'
+      fileURI: '${labSA.properties.primaryEndpoints.blob}${containerName}/MicrosoftEntraPrivateNetworkConnectorInstaller.exe?${_appsSasToken}'
+      installCommand: '.\\MicrosoftEntraPrivateNetworkConnectorInstaller.exe REGISTERCONNECTOR="false" /q'
+      uninstallCommand: 'uninstall.exe'
+    }
+    dependsOn: [
+      appGallery
+      EntraNetworkBlob
+    ]
+  }
 // Key Vault and Secrets
+  // Build kv so we can use it later
+  resource kv 'Microsoft.KeyVault/vaults@2023-07-01' = {
+    name: '${namePrefix}-kv1'
+    location: location
+    properties: {sku: {family: 'A', name: 'standard'}, tenantId: tenant().tenantId, accessPolicies:[], enableSoftDelete: false}
+  }
+  // finish making the kv
   module keyVault 'SubTemplates/accessories/keyvault.bicep' = {
     name: '${namePrefix}-kv1'
     params: {
@@ -934,6 +1035,15 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
               'list'
             ]
           }
+        }, {
+          tenantId: subscription().tenantId
+          objectId: kvAdminPrincipal.properties.principalId
+          permissions: {
+            secrets: [
+              'set'
+              'list'
+            ]
+          }
         } ]
       networkAcls: {
         bypass: 'AzureServices'
@@ -941,7 +1051,11 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
         ipRules: []
         virtualNetworkRules: [
           {
-            id: trustedSubnet.id
+            id: (!virtualNetwork.provisionNew) ? vnet.outputs.vnetSubnets[1].id : trustedSubnet.id
+            ignoreMissingVnetServiceEndpoint: false
+          }
+          {
+            id: (!virtualNetwork.provisionNew) ? vnet.outputs.vnetSubnets[3].id : containerSubnet.id
             ignoreMissingVnetServiceEndpoint: false
           }
         ]

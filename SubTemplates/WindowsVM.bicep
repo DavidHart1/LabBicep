@@ -21,6 +21,7 @@ param forestName string
 param adminPassword string
 param identityName string
 param CloudSyncAppId string
+param EntraPNCAppId string
 param patchMode string = 'AutomaticByOS'
 param enableHotpatching bool = false
 param securityType string = 'TrustedLaunch'
@@ -121,6 +122,11 @@ resource virtualMachine 'Microsoft.Compute/virtualMachines@2022-11-01' = {
         {
           order: 1
           packageReferenceId: CloudSyncAppId
+          treatFailureAsDeploymentFailure: true
+        }
+        {
+          order: 2
+          packageReferenceId: EntraPNCAppId
           treatFailureAsDeploymentFailure: true
         }
       ]

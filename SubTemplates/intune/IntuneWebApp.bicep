@@ -11,6 +11,8 @@ param keyvault object
 param tz string
 param farmId string
 
+var dbURL2 = environment().suffixes.sqlServerHostname
+
 resource intuneWeb 'Microsoft.Web/sites@2023-12-01' = {
   name: name
   location: location
@@ -60,7 +62,7 @@ resource intuneWeb 'Microsoft.Web/sites@2023-12-01' = {
         }
         {
           name:'AZDBSERVER'
-          value:'${dbname}.database.windows.net'
+          value:'${dbname}${dbURL2}'
         }
         {
           name:'AZURE_TENANT_ID'
