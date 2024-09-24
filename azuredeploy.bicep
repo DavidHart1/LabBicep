@@ -40,7 +40,8 @@ param provisionSentinel bool = false
 param provisionWindowsVM {
   provision: bool
   nameSuffix: string
-} = {nameSuffix: 'win11', provision: true}
+  ouPath: string
+}
 @description('Whether or not to provision an Entra-Joined Windows 11 VM')
 param provisionEntraWindowsVM {
   provision: bool
@@ -364,10 +365,7 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
     ]
   }
 
-  // Windows11 Client2 Resources
-  // TODO: We need to provision this AFTER the DC is fully deployed
-  // TODO: We need to update the DNS settings on the VNet to point to the DC. Azure may give us issues iwth this.
-  // TODO: Need to write a powershell script to join the domain and reboot. Can we use creds in KV?
+  // OPNSense Admin Resources
   module nsgwinvm 'SubTemplates/vnet/nsg.bicep' = {
     name: winvmnetworkSecurityGroupName
     params: {
@@ -468,10 +466,120 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       trustedSubnetId: (!virtualNetwork.provisionNew) ? vnet.outputs.vnetSubnets[2].id : windowsvmsubnet.id
       virtualMachineName: winvmName
       virtualMachineSize: virtualMachineSize
+      domainInfo: {
+        joinAD: false
+      }
     }
     dependsOn: [
       nsgwinvm
       winvmpublicip
+    ]
+  }
+
+  // Windows11 AD Joined Client Resources
+  // TODO: We need to provision this AFTER the DC is fully deployed
+  // TODO: We need to update the DNS settings on the VNet to point to the DC. Azure may give us issues iwth this.
+  // TODO: Need to write a powershell script to join the domain and reboot. Can we use creds in KV?
+  module nsgwinvm1 'SubTemplates/vnet/nsg.bicep' = if(provisionWindowsVM.provision) {
+    name: '${namePrefix}-${provisionWindowsVM.nameSuffix}-nsg'
+    params: {
+      Location: location
+      nsgName: '${namePrefix}-${provisionWindowsVM.nameSuffix}-nsg'
+      securityRules: [
+        {
+          // TODO: Fix IP Address
+          name: 'RDP'
+          properties: {
+            priority: 4096
+            sourceAddressPrefix: '*'
+            protocol: 'Tcp'
+            destinationPortRange: '3389'
+            access: 'Allow'
+            direction: 'Inbound'
+            sourcePortRange: '*'
+            destinationAddressPrefix: '*'
+          }
+        }
+        {
+          name: 'Out-Any'
+          properties: {
+            priority: 4096
+            sourceAddressPrefix: '*'
+            protocol: '*'
+            destinationPortRange: '*'
+            access: 'Allow'
+            direction: 'Outbound'
+            sourcePortRange: '*'
+            destinationAddressPrefix: '*'
+          }
+        }
+      ]
+    }
+  }
+
+  module winvmpublicip1 'SubTemplates/vnet/publicip.bicep' = if(provisionWindowsVM.provision) {
+    name: '${deployment().name}-${namePrefix}-${provisionWindowsVM.nameSuffix}-pip'
+    params: {
+      location: location
+      publicipName: '${namePrefix}-${provisionWindowsVM.nameSuffix}-pip'
+      publicipproperties: {
+        publicIPAllocationMethod: 'Static'
+      }
+      publicipsku: {
+        name: PublicIPAddressSku
+        tier: 'Regional'
+      }
+    }
+    dependsOn: [
+      vnet
+    ]
+  }
+  resource vnetDnsUpdateScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = if (provisionDC) {
+    name: 'vnetDnsUpdateScript'
+    location: location
+    kind: 'AzurePowerShell'
+    identity: {
+      type: 'UserAssigned'
+      userAssignedIdentities: {
+        '${vnetPrincipal.id}': {}
+      }
+    }
+    properties: {
+      retentionInterval: 'PT1H'
+      arguments: ' -resourceGroupName ${resourceGroup().name} -vnetName ${virtualNetworkName} -identityId ${vnetPrincipal.properties.clientId} -dcVMName ${dcVMName}'
+      azPowerShellVersion: '9.7'
+      scriptContent: loadTextContent('./Scripts/SetVnetDNS.ps1')
+    }
+    dependsOn: [
+      vnetPrincipalContributor
+      vnetPrincipalVMContributor
+      CreateDCVM
+    ]
+  }
+
+  module winvm1 'SubTemplates/VM/windows11-vm.bicep' = if(provisionWindowsVM.provision) {
+    name: '${deployment().name}-${namePrefix}-${provisionWindowsVM.nameSuffix}'
+    params: {
+      Location: location
+      nsgId: nsgwinvm1.outputs.nsgID
+      publicIPId: winvmpublicip1.outputs.publicipId
+      TempUsername: localAdminName
+      TempPassword: localAdminPassword
+      trustedSubnetId: (!virtualNetwork.provisionNew) ? vnet.outputs.vnetSubnets[2].id : windowsvmsubnet.id
+      virtualMachineName: '${namePrefix}-${provisionWindowsVM.nameSuffix}'
+      virtualMachineSize: virtualMachineSize
+      domainInfo: {
+        domainName: dcForestName
+        ouPath: provisionWindowsVM.ouPath
+        joinAD: true
+        localAdminName: localAdminName
+        localAdminPassword: localAdminPassword
+      }
+    }
+    dependsOn: [
+      nsgwinvm1
+      winvmpublicip1
+      vnetDnsUpdateScript
     ]
   }
 
@@ -536,19 +644,25 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
     name: '${deployment().name}-${namePrefix}-${provisionEntraWindowsVM.nameSuffix}'
     params: {
       Location: location
-      nsgId: nsgwinvm.outputs.nsgID
+      nsgId: nsgwinvm2.outputs.nsgID
       publicIPId: winvmpublicip2.outputs.publicipId
       TempUsername: localAdminName
       TempPassword: localAdminPassword
       trustedSubnetId: (!virtualNetwork.provisionNew) ? vnet.outputs.vnetSubnets[2].id : windowsvmsubnet.id
       virtualMachineName: '${namePrefix}-${provisionEntraWindowsVM.nameSuffix}'
       virtualMachineSize: virtualMachineSize
+      domainInfo: {
+        joinAD: false
+        entraJoin: true
+      }
     }
     dependsOn: [
       nsgwinvm2
       winvmpublicip2
     ]
   }
+  // TODO: add an rbac assignment for entra vm sign in.
+
 // Get SQL Group
   //resource sqlAdminGroup 'Microsoft.Graph/groups@v1.0' existing = if(azSQL.groupExisting) {
   //  uniqueName: azSQL.adminGroupName
@@ -905,8 +1019,37 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
     ]
   }
 
-// TODO: Figure out how to update DNS for VNet after DC is deployed.
-// TODO: Maybe just have to do it on NICs for future VMS?
+  // Deploy vnet Contributor principal for DNS Update script
+  resource vnetPrincipal 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = if (provisionDC) {
+    name: '${namePrefix}-vnetId1'
+    location: location
+  }
+  resource vnetContribRoleDef 'Microsoft.Authorization/roleDefinitions@2022-04-01' existing = if (provisionDC) {
+    scope: subscription()
+    name: 'b24988ac-6180-42a0-ab88-20f7382dd24c'
+  }
+  resource vmContribRoleDef 'Microsoft.Authorization/roleDefinitions@2022-04-01' existing = if (provisionDC) {
+    scope: subscription()
+    name: '9980e02c-c2be-4d73-94e8-173b1dc7cf3c'
+  }
+  resource vnetPrincipalContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (provisionDC) {
+    name: guid(resourceGroup().id, vnetPrincipal.name, vnetContribRoleDef.id)
+    scope: resourceGroup()
+    properties: {
+      principalId: vnetPrincipal.properties.principalId
+      principalType: 'ServicePrincipal'
+      roleDefinitionId: vnetContribRoleDef.id
+    }
+  }
+  resource vnetPrincipalVMContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (provisionDC) {
+    name: guid(resourceGroup().id, vnetPrincipal.name, vmContribRoleDef.id)
+    scope: resourceGroup()
+    properties: {
+      principalId: vnetPrincipal.properties.principalId
+      principalType: 'ServicePrincipal'
+      roleDefinitionId: vmContribRoleDef.id
+    }
+  }
 
 // Deploy Log Analytics and Sentinel
   resource sentinelPrincipal 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = if (provisionSentinel) {
