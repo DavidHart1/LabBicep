@@ -109,7 +109,7 @@ param dcForestName string
   @sys.description('URI for Custom OPN Script and Config')
   param OpnScriptURI string = 'https://raw.githubusercontent.com/dmauser/opnazure/master/scripts/'
   @sys.description('OPN Version')
-  param OpnVersion string = '24.1'
+  param OpnVersion string = '24.7'
   @sys.description('Azure WALinux agent Version')
   param WALinuxVersion string = '2.11.1.4'
   @sys.description('Shell Script to be executed')
@@ -873,8 +873,10 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       adminUsername: localAdminName
       adminPassword: localAdminPassword
       identityName: dcPrincipalName
-      CloudSyncAppId: cloudSyncApp.outputs.appReference
-      EntraPNCAppId: EntraPNCApp.outputs.appReference
+      appIds: [
+        cloudSyncApp.outputs.appReference
+        EntraPNCApp.outputs.appReference
+      ]
       forestName: dcForestName
       dscConfigScriptName: 'ConfigureDC.ps1'
       dscConfigScriptSASToken: _artifactsLocationSasToken
