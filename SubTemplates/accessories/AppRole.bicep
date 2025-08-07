@@ -1,9 +1,10 @@
-extension microsoftGraph
+extension graphV1
 
 param principalName string
 param resourceAppId string = '00000003-0000-0000-c000-000000000000'
 param appRoles array = [
   'User.Read.All'
+  'User.ReadWrite.All'
 ]
 
 resource principal 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
@@ -18,7 +19,7 @@ resource resourceSpn 'Microsoft.Graph/servicePrincipals@v1.0' existing = {
   appId: resourceAppId
 }
 
-resource dcPrincipalAppRole 'Microsoft.Graph/appRoleAssignedTo@beta' = [for appRole in appRoles: {
+resource dcPrincipalAppRole 'Microsoft.Graph/appRoleAssignedTo@v1.0' = [for appRole in appRoles: {
   principalId: principalSPN.id
   resourceId: resourceSpn.id
   appRoleId: (filter(resourceSpn.appRoles, ar => ar.value == appRole)[0]).id

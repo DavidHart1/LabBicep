@@ -1,4 +1,5 @@
-extension microsoftGraph
+extension 'br:mcr.microsoft.com/bicep/extensions/microsoftgraph/v1.0:1.0.0'
+extension 'br:mcr.microsoft.com/bicep/extensions/microsoftgraph/beta:1.0.0'
 
 @minLength(5)
 @maxLength(15)
@@ -64,11 +65,14 @@ param intune {
 //@description('Name of the Sentinel Workspace')
 //param sentinelName string
 
-var storageAccountName = toLower('${namePrefix}labsa01')
+var storageAccountName = toLower('${namePrefix}labsa01${randomString}')
 var lawName = '${namePrefix}-law01'
 var dcVMName = '${namePrefix}-DC01'
 // ! Change this
 param dcForestName string
+@description('Random String used for uniqueness for globally unique names')
+param randomString string
+param usersToProvision array
 
 // Network Params
   param virtualNetwork {
@@ -109,9 +113,9 @@ param dcForestName string
   @sys.description('URI for Custom OPN Script and Config')
   param OpnScriptURI string = 'https://raw.githubusercontent.com/dmauser/opnazure/master/scripts/'
   @sys.description('OPN Version')
-  param OpnVersion string = '24.1'
+  param OpnVersion string = '25.1'
   @sys.description('Azure WALinux agent Version')
-  param WALinuxVersion string = '2.11.1.4'
+  param WALinuxVersion string = '2.12.0.4'
   @sys.description('Shell Script to be executed')
   param ShellScriptName string = 'configureopnsense.sh'
   @sys.description('OPNSense VM size, please choose a size which allow 2 NICs.')
@@ -135,7 +139,7 @@ param dcForestName string
     'Standard_RAGZRS'
   ])
   param storageSKU string = 'Standard_LRS'
-  param location string = 'westus3'
+  param location string = 'westus2'
   param containerName string = 'bicep'
 
 var automationName = '${namePrefix}-Auto1'
@@ -289,6 +293,7 @@ module nsgopnsense 'SubTemplates/vnet/nsg.bicep' = {
       //resourceAppId: '00000003-0000-0000-c000-000000000000'
       appRoles: [
         'User.Read.All'
+        'User.ReadWrite.All'
         'Application.ReadWrite.All'
         'AuditLog.Read.All'
         'AuditLogsQuery.Read.All'
@@ -302,6 +307,36 @@ module nsgopnsense 'SubTemplates/vnet/nsg.bicep' = {
     }
     dependsOn: [
       dcPrincipal
+      //Trying this to see if adding a delay fixes the principal not being found issue.
+      AADCAgentBlob
+    ]
+  }
+
+  resource entraDeploymentScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
+    name: 'EntraDeploymentScript'
+    location: location
+    kind: 'AzurePowerShell'
+    identity: {
+      type: 'UserAssigned'
+      userAssignedIdentities: {
+        '${dcPrincipal.id}': {}
+      }
+    }
+    properties: {
+      retentionInterval: 'PT1H'
+      cleanupPreference: 'OnSuccess'
+      arguments: ' -NamePrefix ${namePrefix} -Password $Password -domainName ${dcForestName} -managedidentityclientid ${dcPrincipal.properties.clientId}'
+      azPowerShellVersion: '11.0'
+      environmentVariables: [
+        {
+          name: 'Password'
+          secureValue: adUserPassword
+        }
+      ]
+      scriptContent: loadTextContent('./Scripts/EntraConfig.ps1')
+    }
+    dependsOn: [
+      dcPrincipalAppRole
     ]
   }
 
@@ -359,8 +394,6 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       nsgId: nsgopnsense.outputs.nsgID
     }
     dependsOn: [
-      vnet
-      nsgopnsense
     ]
   }
 
@@ -470,8 +503,6 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       virtualMachineSize: virtualMachineSize
     }
     dependsOn: [
-      nsgwinvm
-      winvmpublicip
     ]
   }
 
@@ -546,7 +577,6 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
     }
     dependsOn: [
       nsgwinvm2
-      winvmpublicip2
     ]
   }
 // Get SQL Group
@@ -642,6 +672,9 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
         'Application.ReadWrite.All'
       ]
     }
+    dependsOn: [
+      AADCAgentBlob
+    ]
   }
   resource intuneAppPassScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
     name: 'DeploymentScript-CreateIntuneAppPassword'
@@ -670,14 +703,13 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       }
     }
     dependsOn: [
-      keyVault
-      intuneEntraApp
       scriptAppRWRole
     ]
   }
   module intuneEntraApp 'SubTemplates/intune/IntuneCD.bicep' = {
     name: '${deployment().name}-${namePrefix}-IntuneCDEntraApp'
     params: {
+      randomString: randomString
       namePrefix: namePrefix
     }
     dependsOn: [
@@ -699,7 +731,6 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
     }
     dependsOn: [
       keyVault
-      intuneEntraApp
     ]
   }
 
@@ -725,15 +756,13 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       farmId: intuneCDWebServer.id
       keyvault: keyVault.outputs.keyVaultObject
       location: location
-      name: '${namePrefix}-IntuneCD'
+      name: '${namePrefix}-IntuneCD-${randomString}'
       tz: 'America/Denver'
-      url: 'https://${namePrefix}-IntuneCD.azurewebsites.net'
+      url: 'https://${namePrefix}-IntuneCD-${randomString}.azurewebsites.net'
       webappClientId: intuneEntraApp.outputs.appId
       webappClientSecret: kv.getSecret('IntuneCDSecret')
     }
     dependsOn: [
-      keyVault
-      intuneEntraApp
       intuneAppPassScript
     ]
   }
@@ -770,7 +799,6 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       roleDefinitionId: storageContribRoleDef.id
     }
     dependsOn: [
-      saPrincipal
     ]
   }
 // Upload Blobs
@@ -886,7 +914,7 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
         '${labSA.properties.primaryEndpoints.blob}${containerName}/DCSetupOrchestrator.ps1?${_artifactsLocationSasToken}'
       ]
       keyVaultParameters: {
-        VaultName: '${namePrefix}-kv1'
+        VaultName: '${namePrefix}-kv1-${randomString}'
         AzAdminSecretName:'AzAdminName'
         AzPassSecretName: 'AzAdminPassword'
         DomainAdminSecretName: 'localAdminName'
@@ -895,11 +923,11 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       }
     }
     dependsOn: [
-      vnet
       dcBlob
       AADSetupBlob
       ConfigCSBlob
       DCSOrchBlob
+      entraDeploymentScript
     ]
   }
 
@@ -1016,16 +1044,16 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
 // Key Vault and Secrets
   // Build kv so we can use it later
   resource kv 'Microsoft.KeyVault/vaults@2023-07-01' = {
-    name: '${namePrefix}-kv1'
+    name: '${namePrefix}-kv1-${randomString}'
     location: location
     properties: {sku: {family: 'A', name: 'standard'}, tenantId: tenant().tenantId, accessPolicies:[], enableSoftDelete: false}
   }
   // finish making the kv
   module keyVault 'SubTemplates/accessories/keyvault.bicep' = {
-    name: '${namePrefix}-kv1'
+    name: '${namePrefix}-kv1-${randomString}'
     params: {
       location: location
-      keyVaultName: '${namePrefix}-kv1'
+      keyVaultName: '${namePrefix}-kv1-${randomString}'
       accessPolicies: [ {
           tenantId: subscription().tenantId
           objectId: dcPrincipal.properties.principalId
@@ -1094,7 +1122,6 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       ]
     }
     dependsOn: [
-      saPrincipal
     ]
   }
 

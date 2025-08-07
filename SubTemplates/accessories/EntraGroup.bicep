@@ -1,4 +1,5 @@
-extension microsoftGraph
+extension graphV1
+extension graphBeta
 
 param groupName string
 param groupMail bool = false

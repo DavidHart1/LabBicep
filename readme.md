@@ -32,15 +32,13 @@ Compile DSC files (if needed)
 3. `Publish-AzVMDscConfiguration .\Scripts\ConfigureDC.ps1 -OutputArchivePath .\ConfigureDC.zip`
 
 If you plan to provision the OPNSense firewall, you will need to accept the FreeBSD license terms using the following command:
-`az vm image terms accept --publisher "thefreebsdfoundation" --offer "freebsd-13_2" --plan "13_2-release"`
-
-The deployment will automatically deploy the service principal for a DC if enabled, and will assign it permissions to the Graph API using the experimental graph extension. Therefore, you must run this from az bicep cli, NOT from vscode directly.
+`az vm image terms accept --urn thefreebsdfoundation:freebsd-14_1:14_1-release-amd64-gen2-zfs:14.1.0 -o none"`
 
 Create Bicep param file and populate with required parameters.
 
 ## Usage
 
-Deploy with az cli. Example:
+Deploy with az cli or via VSCode directly. Example:
 `az deployment group create --resource-group test-azure --template-file azuredeploy.bicep -parameters azuredeploy.bicepparram`
 
 ## Contributing

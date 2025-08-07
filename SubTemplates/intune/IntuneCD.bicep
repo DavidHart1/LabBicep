@@ -1,6 +1,8 @@
-extension microsoftGraph
+extension graphV1
+extension graphBeta
 
 param namePrefix string
+param randomString string
 
 resource intuneEntraApp 'Microsoft.Graph/applications@v1.0' = {
   displayName: '${namePrefix}-IntuneCD'
@@ -8,8 +10,8 @@ resource intuneEntraApp 'Microsoft.Graph/applications@v1.0' = {
   uniqueName: '${namePrefix}-IntuneCD'
   web: {
     redirectUris: [
-      'https://${namePrefix}IntuneCD.azurewebsites.net/auth/signin-oidc'
-      'https://${namePrefix}IntuneCD.azurewebsites.net/tenants'
+      'https://${namePrefix}IntuneCD-${randomString}.azurewebsites.net/auth/signin-oidc'
+      'https://${namePrefix}IntuneCD-${randomString}.azurewebsites.net/tenants'
     ]
   }
   appRoles: [

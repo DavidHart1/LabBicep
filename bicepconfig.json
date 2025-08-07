@@ -1,5 +1,6 @@
 {
-    "experimentalFeaturesEnabled": {
-        "extensibility": true
+    "extensions": {
+        "graphV1": "br:mcr.microsoft.com/bicep/extensions/microsoftgraph/v1.0:1.0.0",
+        "graphBeta": "br:mcr.microsoft.com/bicep/extensions/microsoftgraph/beta:1.0.0"
     }
 }
