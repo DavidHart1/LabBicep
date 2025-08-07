@@ -20,8 +20,7 @@ param forestName string
 @secure()
 param adminPassword string
 param identityName string
-param CloudSyncAppId string
-param EntraPNCAppId string
+param appIds array
 param patchMode string = 'AutomaticByOS'
 param enableHotpatching bool = false
 param securityType string = 'TrustedLaunch'
@@ -121,12 +120,12 @@ resource virtualMachine 'Microsoft.Compute/virtualMachines@2022-11-01' = {
       galleryApplications: [
         {
           order: 1
-          packageReferenceId: CloudSyncAppId
+          packageReferenceId: appIds[0]
           treatFailureAsDeploymentFailure: true
         }
         {
           order: 2
-          packageReferenceId: EntraPNCAppId
+          packageReferenceId: appIds[1]
           treatFailureAsDeploymentFailure: true
         }
       ]
