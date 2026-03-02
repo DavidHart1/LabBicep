@@ -230,40 +230,12 @@ module publicip 'SubTemplates/vnet/publicip.bicep' = if (provisionOPNSense) {
   }
 }
 
-// Create NSG
-module nsgopnsense 'SubTemplates/vnet/nsg.bicep' = {
+// Create NSG - block management ports, allow everything else
+module nsgopnsense 'SubTemplates/vnet/nsg-block-mgmt.bicep' = {
   name: networkSecurityGroupName
   params: {
-    Location: location
+    location: location
     nsgName: networkSecurityGroupName
-    securityRules: [
-      {
-        name: 'In-Any'
-        properties: {
-          priority: 4096
-          sourceAddressPrefix: '*'
-          protocol: '*'
-          destinationPortRange: '*'
-          access: 'Allow'
-          direction: 'Inbound'
-          sourcePortRange: '*'
-          destinationAddressPrefix: '*'
-        }
-      }
-      {
-        name: 'Out-Any'
-        properties: {
-          priority: 4096
-          sourceAddressPrefix: '*'
-          protocol: '*'
-          destinationPortRange: '*'
-          access: 'Allow'
-          direction: 'Outbound'
-          sourcePortRange: '*'
-          destinationAddressPrefix: '*'
-        }
-      }
-    ]
   }
 }
 
@@ -399,7 +371,7 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       virtualMachineName: virtualMachineName
       virtualMachineSize: virtualMachineSize
       publicIPId: publicip.outputs.publicipId
-      nsgId: nsgopnsense.outputs.nsgID
+      nsgId: nsgopnsense.outputs.nsgId
     }
     dependsOn: [
     ]
