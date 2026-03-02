@@ -9,7 +9,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-05-01' existing = {
 resource subnet 'Microsoft.Network/virtualNetworks/subnets@2023-05-01' = {
   parent: vnet
   name: subnetName
-   properties: properties
+  properties: properties
 }
 
 output subnetId string = subnet.id

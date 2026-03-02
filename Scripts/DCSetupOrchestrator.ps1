@@ -22,8 +22,21 @@ param(
 )
 # Might have to do some kind of network check here if the DNS Forwarding change doesn't fix this.
 # Install the Microsoft Graph and Az (and Nuget provider) PowerShell module if it is not already installed
-get-installedmodule | uninstall-module
-if ((get-module PackageManagement -ListAvailable).version.minor -eq 0) {
+
+# wait for internet connection to be setup.
+while (-not (Test-Connection google.com -Count 1 -Quiet)) {
+    Start-Sleep -Seconds 30
+}
+
+# Safely remove conflicting modules (skip core modules that can't be uninstalled)
+Get-InstalledModule -ErrorAction SilentlyContinue | ForEach-Object {
+    try {
+        Uninstall-Module -Name $_.Name -AllVersions -Force -ErrorAction SilentlyContinue
+    } catch {
+        Write-Output "Could not uninstall module $($_.Name): $($_.Exception.Message)"
+    }
+}
+if ((Get-Module PackageManagement -ListAvailable).Version.Minor -eq 0) {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 }
 if (-not (Get-PackageProvider -Name NuGet -ListAvailable)) {
@@ -47,7 +60,7 @@ Import-Module Az.Accounts
 Import-Module Az.KeyVault
 Import-Module Microsoft.PowerShell.SecretManagement
 # Connect to Azure
-# $ManagedIdentityClientId = 'ef898e5c-06d4-4b8a-9710-7bdbb9435c43'
+# $ManagedIdentityClientId = '8b51a025-4422-4ec9-9e79-d7d26d7d959a'
 Write-Output "Connecting to Azure with Managed Identity $ManagedIdentityClientId"
 Connect-AzAccount -Identity -AccountId $ManagedIdentityClientId
 # Add Key Vault
@@ -55,7 +68,12 @@ $VaultParameters = @{
     AZKVaultName = $VaultName
     SubscriptionId = $SubscriptionId
 }
-Register-SecretVault -Module Az.KeyVault -Name AZKVault -VaultParameters $VaultParameters
+# Register secret vault only if not already registered (idempotent)
+if (-not (Get-SecretVault -Name AZKVault -ErrorAction SilentlyContinue)) {
+    Register-SecretVault -Module Az.KeyVault -Name AZKVault -VaultParameters $VaultParameters
+} else {
+    Write-Output "Secret vault 'AZKVault' already registered, skipping."
+}
 # Pull Hybrid Admin creds from Key Vault
 #$AzureAdminUsername = Get-Secret -Vault AZKVault -Name $AzAdminSecretName -AsPlainText
 #$AzureAdminPassword = Get-Secret -Vault AZKVault -Name $AzPassSecretName
@@ -63,7 +81,7 @@ Register-SecretVault -Module Az.KeyVault -Name AZKVault -VaultParameters $VaultP
 # Pull Domain Admin creds from Key Vault
 $DomainAdminUsername = Get-Secret -Vault AZKVault -Name $DomainAdminSecretName -AsPlainText
 $DomainAdminPassword = Get-Secret -Vault AZKVault -Name $DomainPassSecretName
-$DomainAdminCredential = New-Object System.Management.Automation.PSCredential($DomainAdminUsername, $DomainAdminPassword)
+$DomainAdminCredential = [PSCredential]::New($DomainAdminUsername, $DomainAdminPassword)
 
 $DomainUserPassword = Get-Secret -Vault AZKVault -Name $DomainUserSecretName
 # Call AADSetup.ps1 with proper creds, using secureStrings

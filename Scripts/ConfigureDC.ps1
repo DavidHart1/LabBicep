@@ -37,7 +37,10 @@ configuration ConfigureDC
                 Write-Verbose -Verbose "Enabling DNS client diagnostics"
             }
             GetScript =  { @{} }
-            TestScript = { $false }
+            TestScript = {
+                $diags = Get-DnsServerDiagnostics
+                return ($diags.All -eq $true)
+            }
             DependsOn = "[WindowsFeature]DNS"
         }
 

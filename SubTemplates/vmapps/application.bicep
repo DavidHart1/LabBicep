@@ -34,6 +34,10 @@ resource appVersion 'Microsoft.Compute/galleries/applications/versions@2022-08-0
         install: installCommand
         remove: uninstallCommand
       }
+      settings: {
+        packageFileName: '${appName}.exe'
+
+      }
       storageAccountType: 'Standard_LRS'
     }
   }

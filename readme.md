@@ -32,7 +32,10 @@ Compile DSC files (if needed)
 3. `Publish-AzVMDscConfiguration .\Scripts\ConfigureDC.ps1 -OutputArchivePath .\ConfigureDC.zip`
 
 If you plan to provision the OPNSense firewall, you will need to accept the FreeBSD license terms using the following command:
+AZ Cli:
 `az vm image terms accept --urn thefreebsdfoundation:freebsd-14_1:14_1-release-amd64-gen2-zfs:14.1.0 -o none"`
+Powershell
+`Get-AzMarketplaceTerms -Publisher 'thefreebsdfoundation' -Product 'freebsd-14_1' -Name '14_1-release-amd64-gen2-zfs' -OfferType 'latest' | Set-AzMarketplaceTerms -Accept`
 
 Create Bicep param file and populate with required parameters.
 

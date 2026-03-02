@@ -73,8 +73,15 @@ $domainDN = $domainName -replace "\.", ",DC="
 $ouPath = "OU=$ouName,DC=$domainDN"  # Replace with your domain information
 $newdomainDN = "DC=$domainDN"
 
-# TODO: Add check to see if OU already exists, even though it shouldn't.
-New-ADOrganizationalUnit -Path $newdomainDN -Name $ouName
+# Create OU if it doesn't already exist (idempotent)
+try {
+    Get-ADOrganizationalUnit -Identity $ouPath -ErrorAction Stop
+    Write-Output "OU '$ouName' already exists, skipping creation."
+} catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] {
+    Write-Output "Creating OU '$ouName'..."
+    New-ADOrganizationalUnit -Path $newdomainDN -Name $ouName
+}
+
 foreach ($user in $cloudUsers) {
     $userPrincipalName = $user.UserPrincipalName
     $displayName = $user.DisplayName
@@ -83,21 +90,30 @@ foreach ($user in $cloudUsers) {
     $mail = $user.Mail
     $samAccountName = $user.UserPrincipalName.Split("@")[0]
 
-    $newUserParams = @{
-        SamAccountName        = $samAccountName
-        UserPrincipalName     = $userPrincipalName
-        Name                  = $displayName
-        GivenName             = $givenName
-        Surname               = $surname
-        EmailAddress          = $mail
-        DisplayName           = $displayName
-        Enabled               = $true
-        Path                  = $ouPath
-        Credential            = $domainCredential
-        AccountPassword       = $NewUserPassword
-        ChangePasswordAtLogon = $false
-        PasswordNeverExpires  = $false
-        PasswordNotRequired   = $false
+    # Check if user already exists (idempotent)
+    $existingUser = Get-ADUser -Filter "SamAccountName -eq '$samAccountName'" -ErrorAction SilentlyContinue
+    if ($existingUser) {
+        Write-Output "AD user '$samAccountName' already exists, updating..."
+        Set-ADUser -Identity $existingUser -GivenName $givenName -Surname $surname -EmailAddress $mail `
+            -DisplayName $displayName -UserPrincipalName $userPrincipalName -Credential $domainCredential
+    } else {
+        Write-Output "Creating AD user '$samAccountName'..."
+        $newUserParams = @{
+            SamAccountName        = $samAccountName
+            UserPrincipalName     = $userPrincipalName
+            Name                  = $displayName
+            GivenName             = $givenName
+            Surname               = $surname
+            EmailAddress          = $mail
+            DisplayName           = $displayName
+            Enabled               = $true
+            Path                  = $ouPath
+            Credential            = $domainCredential
+            AccountPassword       = $NewUserPassword
+            ChangePasswordAtLogon = $false
+            PasswordNeverExpires  = $false
+            PasswordNotRequired   = $false
+        }
+        New-ADUser @newUserParams
     }
-    New-ADUser @newUserParams
 }

@@ -24,14 +24,27 @@ $params = @{
 Connect-MgGraph -Identity -ClientId $identityId
 try {
     $app = Get-MgApplication -ApplicationId $applicationId
-    foreach ($appPass in $app.passwordCredentials) {
-        Remove-MgApplicationPassword -ApplicationId $applicationId -KeyId $appPass.KeyId
+    # Only rotate the password if no valid credential exists, or if the existing
+    # secret can't be verified (idempotent: skip rotation if a credential named
+    # "IntuneCD" already exists and the KV secret is populated)
+    $existingCred = $app.PasswordCredentials | Where-Object { $_.DisplayName -eq "IntuneCD" }
+
+    Connect-AzAccount -Identity -AccountId $identityId
+    $existingSecret = Get-AzKeyVaultSecret -VaultName $vaultName -Name "IntuneCDSecret" -ErrorAction SilentlyContinue
+
+    if ($existingCred -and $existingSecret) {
+        Write-Output "IntuneCD credential and Key Vault secret already exist, skipping password rotation."
+    } else {
+        Write-Output "Rotating IntuneCD app password..."
+        # Remove any existing credentials
+        foreach ($appPass in $app.PasswordCredentials) {
+            Remove-MgApplicationPassword -ApplicationId $applicationId -KeyId $appPass.KeyId
+        }
+        $appPass = Add-MgApplicationPassword -ApplicationId $applicationId -BodyParameter $params
+        Set-AzKeyVaultSecret -VaultName $vaultName -Name "IntuneCDSecret" -SecretValue (ConvertTo-SecureString -String $appPass.SecretText -AsPlainText)
     }
 }
 catch {
-    <#Do this if a terminating exception happens#>
+    Write-Output "Error managing app password: $($_.Exception.Message)"
+    throw
 }
-$appPass = Add-MgApplicationPassword -ApplicationId $applicationId -BodyParameter $params
-
-Connect-AzAccount -Identity -AccountId $identityId
-Set-AzKeyVaultSecret -VaultName $vaultName -Name "IntuneCDSecret" -SecretValue (ConvertTo-SecureString -String $appPass.SecretText -AsPlainText)

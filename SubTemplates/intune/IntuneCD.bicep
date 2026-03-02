@@ -10,8 +10,8 @@ resource intuneEntraApp 'Microsoft.Graph/applications@v1.0' = {
   uniqueName: '${namePrefix}-IntuneCD'
   web: {
     redirectUris: [
-      'https://${namePrefix}IntuneCD-${randomString}.azurewebsites.net/auth/signin-oidc'
-      'https://${namePrefix}IntuneCD-${randomString}.azurewebsites.net/tenants'
+      'https://${namePrefix}-IntuneCD-${randomString}.azurewebsites.net/auth/signin-oidc'
+      'https://${namePrefix}-IntuneCD-${randomString}.azurewebsites.net/tenants'
     ]
   }
   appRoles: [
@@ -68,4 +68,4 @@ resource intuneEntraSP 'Microsoft.Graph/servicePrincipals@v1.0' = {
 output appName string = intuneEntraApp.displayName
 output appId string = intuneEntraApp.appId
 output appObjectId string = intuneEntraApp.id
-output spId string = intuneEntraSP.appId
+output spId string = intuneEntraSP.id

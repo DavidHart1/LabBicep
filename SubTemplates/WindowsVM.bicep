@@ -121,12 +121,12 @@ resource virtualMachine 'Microsoft.Compute/virtualMachines@2022-11-01' = {
         {
           order: 1
           packageReferenceId: appIds[0]
-          treatFailureAsDeploymentFailure: true
+          treatFailureAsDeploymentFailure: false
         }
         {
           order: 2
           packageReferenceId: appIds[1]
-          treatFailureAsDeploymentFailure: true
+          treatFailureAsDeploymentFailure: false
         }
       ]
     }

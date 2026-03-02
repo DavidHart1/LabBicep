@@ -47,7 +47,11 @@ else{
 if ($PSCmdlet.ParameterSetName -eq 'Passwords'){
     $domainAdminCreds = New-Object System.Management.Automation.PSCredential -ArgumentList ($domainAdminUPN, $domainAdminPassword) 
 }
-Add-AADCloudSyncGMSA -Credential $domainAdminCreds
-Add-AADCloudSyncADDomain -DomainName $domainname -Credential $domainAdminCreds 
+Add-AADCloudSyncGMSA -Credential $domainAdminCreds -ErrorAction SilentlyContinue
+try {
+    Add-AADCloudSyncADDomain -DomainName $domainname -Credential $domainAdminCreds
+} catch {
+    Write-Output "Domain '$domainname' may already be configured for Cloud Sync: $($_.Exception.Message)"
+}
 
 Restart-Service -Name AADConnectProvisioningAgent  

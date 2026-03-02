@@ -7,7 +7,10 @@ param TempPassword string
 param virtualMachineSize string
 param nsgId string
 param Location string = resourceGroup().location
-param domainInfo object
+param domainInfo object = {
+  joinAD: false
+  entraJoin: false
+}
 
 var trustedNicName = '${virtualMachineName}-NIC'
 
@@ -43,7 +46,7 @@ resource windows11 'Microsoft.Compute/virtualMachines@2023-07-01' = {
       imageReference: {
         publisher: 'MicrosoftWindowsDesktop'
         offer: 'windows-11'
-        sku: 'win11-23h2-pro'
+        sku: 'win11-24h2-pro'
         version: 'latest'
       }
     }
@@ -70,9 +73,9 @@ resource extjoindomain 'Microsoft.Compute/virtualMachines/extensions@2024-07-01'
       typeHandlerVersion: '1.3'
       autoUpgradeMinorVersion: true
       settings: {
-        name: domainInfo.dcForestName
+        name: domainInfo.domainName
         OUPath: domainInfo.ouPath
-        user: '${domainInfo.dcForestName}\\${domainInfo.localAdminName}'
+        user: '${domainInfo.domainName}\\${domainInfo.localAdminName}'
         restart: 'true'
         options: '3'
         NumberOfRetries: '4'
@@ -91,10 +94,10 @@ resource extjoinentra 'Microsoft.Compute/virtualMachines/extensions@2024-07-01' 
     properties: {
       publisher: 'Microsoft.Azure.ActiveDirectory'
       type: 'AADLoginForWindows'
-      typeHandlerVersion: '1.0'
+      typeHandlerVersion: '2.0'
       autoUpgradeMinorVersion: true
       settings: {
-        mdmId: '000000a-0000-0000-c000-000000000000' // Intune Join
+        mdmId: '0000000a-0000-0000-c000-000000000000' // Intune Join
       }
     }
   }

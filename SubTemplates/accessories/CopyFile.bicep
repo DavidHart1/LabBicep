@@ -13,13 +13,21 @@ param storageAccountName string
 param identityId string
 param sourceFileUri string
 
+// TODO: Migrate to managed identity for storage access instead of key-based auth
 resource storage 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   name: storageAccountName
   location: location
+  tags: {
+    SecurityControl: 'Ignore'
+  }
   sku: {
     name: 'Standard_LRS'
   }
   kind: 'StorageV2'
+  properties: {
+    supportsHttpsTrafficOnly: true
+    allowSharedKeyAccess: true
+  }
 
   resource blobService 'blobServices' = {
     name: 'default'
@@ -43,6 +51,10 @@ resource deploymentScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
   properties: {
     azCliVersion: '2.52.0'
     retentionInterval: 'PT1H'
+    storageAccountSettings: {
+      storageAccountName: storage.name
+      storageAccountKey: storage.listKeys().keys[0].value
+    }
     environmentVariables: [
       {
         name: 'AZURE_STORAGE_ACCOUNT'

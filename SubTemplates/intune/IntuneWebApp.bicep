@@ -2,6 +2,7 @@ param location string
 param name string
 param url string
 param dbname string
+param dbServerName string
 param dbadmin string
 param dbadminpass string
 param webappClientId string
@@ -62,7 +63,7 @@ resource intuneWeb 'Microsoft.Web/sites@2023-12-01' = {
         }
         {
           name:'AZDBSERVER'
-          value:'${dbname}${dbURL2}'
+          value:'${dbServerName}${dbURL2}'
         }
         {
           name:'AZURE_TENANT_ID'

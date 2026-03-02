@@ -32,10 +32,56 @@ $PasswordProfile = New-Object -TypeName Microsoft.Graph.PowerShell.Models.Micros
 $PasswordProfile.Password = $env:Password
 $PasswordProfile.ForceChangePasswordNextSignIn = $false
 $PasswordProfile.ForceChangePasswordNextSignInWithMfa = $false
-# TODO: Add some error checking here to still succeed even if the users already exist. Maybe do an update-mguser if they do.
 
-New-MgUser -DisplayName "Adele Vance" -GivenName "Adele" -Surname "Vance" -UserPrincipalName ("AdeleV@" + $domainName) -PasswordProfile $PasswordProfile -AccountEnabled -MailNickname "AdeleV" -Department "Sales" -JobTitle "Sales Manager" -MobilePhone "+1 206 555 0110" -OfficeLocation "18/2111" -PreferredLanguage "en-US" -StreetAddress "12345 Lake City Way NE" -City "Seattle" -State "WA" -Country "US" -PostalCode "98125"
-New-MgUser -DisplayName "Kelly Dixon" -GivenName "Kelly" -Surname "Dixon" -UserPrincipalName ("KellyD@" + $domainName) -PasswordProfile $PasswordProfile -AccountEnabled -MailNickname "KellyD" -Department "Psychology" -JobTitle "Psychologist" -MobilePhone "+1 206 555 0110" -OfficeLocation "18/2112" -PreferredLanguage "en-US" -StreetAddress "12345 Lake City Way NE" -City "Seattle" -State "WA" -Country "US" -PostalCode "98125"
-New-MgUser -DisplayName "David Hart (non-admin)" -GivenName "David" -Surname "Hart" -UserPrincipalName ("DavidH@" + $domainName) -PasswordProfile $PasswordProfile -AccountEnabled -MailNickname "DavidH" -Department "Sales" -JobTitle "Solutions Engineer" -MobilePhone "+1 206 555 0110" -OfficeLocation "18/2113" -PreferredLanguage "en-US" -StreetAddress "12345 Lake City Way NE" -City "Seattle" -State "WA" -Country "US" -PostalCode "98125"
-New-MgGroup -Description "W365 Assignment Group" -DisplayName ($NamePrefix + "-W365Users") -MailEnabled:$false -MailNickname ($NamePrefix + "-W365Users") -SecurityEnabled
-New-MgGroup -Description "EPM Assignment Group" -DisplayName ($NamePrefix + "-EPMUsers") -MailEnabled:$false -MailNickname ($NamePrefix + "-EPMUsers") -SecurityEnabled
+# Create or update users (idempotent)
+$usersToCreate = @(
+    @{
+        DisplayName = "Adele Vance"; GivenName = "Adele"; Surname = "Vance"; UPN = "AdeleV@$domainName"; MailNickname = "AdeleV"
+        Department = "Sales"; JobTitle = "Sales Manager"; MobilePhone = "+1 206 555 0110"; OfficeLocation = "18/2111"
+        PreferredLanguage = "en-US"; StreetAddress = "12345 Lake City Way NE"; City = "Seattle"; State = "WA"; Country = "US"; PostalCode = "98125"
+    },
+    @{
+        DisplayName = "Kelly Dixon"; GivenName = "Kelly"; Surname = "Dixon"; UPN = "KellyD@$domainName"; MailNickname = "KellyD"
+        Department = "Psychology"; JobTitle = "Psychologist"; MobilePhone = "+1 206 555 0110"; OfficeLocation = "18/2112"
+        PreferredLanguage = "en-US"; StreetAddress = "12345 Lake City Way NE"; City = "Seattle"; State = "WA"; Country = "US"; PostalCode = "98125"
+    },
+    @{
+        DisplayName = "David Hart (non-admin)"; GivenName = "David"; Surname = "Hart"; UPN = "DavidH@$domainName"; MailNickname = "DavidH"
+        Department = "Sales"; JobTitle = "Solutions Engineer"; MobilePhone = "+1 206 555 0110"; OfficeLocation = "18/2113"
+        PreferredLanguage = "en-US"; StreetAddress = "12345 Lake City Way NE"; City = "Seattle"; State = "WA"; Country = "US"; PostalCode = "98125"
+    }
+)
+
+foreach ($u in $usersToCreate) {
+    $existing = Get-MgUser -Filter "userPrincipalName eq '$($u.UPN)'" -ErrorAction SilentlyContinue
+    if ($existing) {
+        Write-Output "User $($u.UPN) already exists, updating..."
+        Update-MgUser -UserId $existing.Id -DisplayName $u.DisplayName -GivenName $u.GivenName -Surname $u.Surname `
+            -Department $u.Department -JobTitle $u.JobTitle -MobilePhone $u.MobilePhone -OfficeLocation $u.OfficeLocation `
+            -PreferredLanguage $u.PreferredLanguage -StreetAddress $u.StreetAddress -City $u.City -State $u.State `
+            -Country $u.Country -PostalCode $u.PostalCode
+    } else {
+        Write-Output "Creating user $($u.UPN)..."
+        New-MgUser -DisplayName $u.DisplayName -GivenName $u.GivenName -Surname $u.Surname `
+            -UserPrincipalName $u.UPN -PasswordProfile $PasswordProfile -AccountEnabled `
+            -MailNickname $u.MailNickname -Department $u.Department -JobTitle $u.JobTitle `
+            -MobilePhone $u.MobilePhone -OfficeLocation $u.OfficeLocation -PreferredLanguage $u.PreferredLanguage `
+            -StreetAddress $u.StreetAddress -City $u.City -State $u.State -Country $u.Country -PostalCode $u.PostalCode
+    }
+}
+
+# Create groups if they don't already exist (idempotent)
+$groupsToCreate = @(
+    @{ Description = "W365 Assignment Group"; DisplayName = "$NamePrefix-W365Users"; MailNickname = "$NamePrefix-W365Users" },
+    @{ Description = "EPM Assignment Group"; DisplayName = "$NamePrefix-EPMUsers"; MailNickname = "$NamePrefix-EPMUsers" }
+)
+
+foreach ($g in $groupsToCreate) {
+    $existingGroup = Get-MgGroup -Filter "displayName eq '$($g.DisplayName)'" -ErrorAction SilentlyContinue
+    if ($existingGroup) {
+        Write-Output "Group $($g.DisplayName) already exists, skipping."
+    } else {
+        Write-Output "Creating group $($g.DisplayName)..."
+        New-MgGroup -Description $g.Description -DisplayName $g.DisplayName -MailEnabled:$false -MailNickname $g.MailNickname -SecurityEnabled
+    }
+}

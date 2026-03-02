@@ -54,7 +54,7 @@ param azSQL {
   nameSuffix: string
   adminGroupName: string
   groupExisting: bool
-} = {nameSuffix: 'azsql1', provision: true, adminGroupName: 'sg-IT', groupExisting: false}
+} = {nameSuffix: 'azsql1', provision: false, adminGroupName: 'sg-IT', groupExisting: false}
 @description('Whether or not to provision Intune')
 param intune {
   provision: bool
@@ -164,6 +164,9 @@ module vnet 'SubTemplates/vnet/vnet.bicep' = {
         name: trustedSubnetName
         properties: {
           addressPrefix: TrustedSubnetCIDR
+          routeTable: {
+            id: winvmroutetable.outputs.routetableID
+          }
           serviceEndpoints: [
             {
               service: 'Microsoft.KeyVault'
@@ -335,6 +338,10 @@ module nsgopnsense 'SubTemplates/vnet/nsg.bicep' = {
         }
       ]
       scriptContent: loadTextContent('./Scripts/EntraConfig.ps1')
+      storageAccountSettings: {
+        storageAccountName: labSA.name
+        storageAccountKey: labSA.listKeys().keys[0].value
+      }
     }
     dependsOn: [
       dcPrincipalAppRole
@@ -387,8 +394,8 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       TempPassword: localAdminPassword
       TempUsername: localAdminName
       multiNicSupport: true
-      trustedSubnetId: (!virtualNetwork.provisionNew) ? vnet.outputs.vnetSubnets[1].id : trustedSubnet.id
-      untrustedSubnetId: (!virtualNetwork.provisionNew) ? vnet.outputs.vnetSubnets[0].id : untrustedSubnet.id
+      trustedSubnetId: virtualNetwork.provisionNew ? vnet.outputs.vnetSubnets[1].id : trustedSubnet.id
+      untrustedSubnetId: virtualNetwork.provisionNew ? vnet.outputs.vnetSubnets[0].id : untrustedSubnet.id
       virtualMachineName: virtualMachineName
       virtualMachineSize: virtualMachineSize
       publicIPId: publicip.outputs.publicipId
@@ -468,7 +475,6 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       rtName: winvmroutetablename
     }
     dependsOn: [
-      vnet
     ]
   }
 
@@ -484,7 +490,6 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       }
     }
     dependsOn: [
-      winvmroutetable
     ]
   }
 
@@ -496,12 +501,9 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       publicIPId: winvmpublicip.outputs.publicipId
       TempUsername: localAdminName
       TempPassword: localAdminPassword
-      trustedSubnetId: (!virtualNetwork.provisionNew) ? vnet.outputs.vnetSubnets[2].id : windowsvmsubnet.id
+      trustedSubnetId: virtualNetwork.provisionNew ? vnet.outputs.vnetSubnets[2].id : windowsvmsubnet.id
       virtualMachineName: winvmName
       virtualMachineSize: virtualMachineSize
-      domainInfo: {
-        joinAD: false
-      }
     }
     dependsOn: [
     ]
@@ -580,6 +582,10 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       arguments: ' -resourceGroupName ${resourceGroup().name} -vnetName ${virtualNetworkName} -identityId ${vnetPrincipal.properties.clientId} -dcVMName ${dcVMName}'
       azPowerShellVersion: '9.7'
       scriptContent: loadTextContent('./Scripts/SetVnetDNS.ps1')
+      storageAccountSettings: {
+        storageAccountName: labSA.name
+        storageAccountKey: labSA.listKeys().keys[0].value
+      }
     }
     dependsOn: [
       vnetPrincipalContributor
@@ -596,7 +602,7 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       publicIPId: winvmpublicip1.outputs.publicipId
       TempUsername: localAdminName
       TempPassword: localAdminPassword
-      trustedSubnetId: (!virtualNetwork.provisionNew) ? vnet.outputs.vnetSubnets[2].id : windowsvmsubnet.id
+      trustedSubnetId: virtualNetwork.provisionNew ? vnet.outputs.vnetSubnets[2].id : windowsvmsubnet.id
       virtualMachineName: '${namePrefix}-${provisionWindowsVM.nameSuffix}'
       virtualMachineSize: virtualMachineSize
       domainInfo: {
@@ -608,8 +614,6 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       }
     }
     dependsOn: [
-      nsgwinvm1
-      winvmpublicip1
       vnetDnsUpdateScript
     ]
   }
@@ -679,7 +683,7 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       publicIPId: winvmpublicip2.outputs.publicipId
       TempUsername: localAdminName
       TempPassword: localAdminPassword
-      trustedSubnetId: (!virtualNetwork.provisionNew) ? vnet.outputs.vnetSubnets[2].id : windowsvmsubnet.id
+      trustedSubnetId: virtualNetwork.provisionNew ? vnet.outputs.vnetSubnets[2].id : windowsvmsubnet.id
       virtualMachineName: '${namePrefix}-${provisionEntraWindowsVM.nameSuffix}'
       virtualMachineSize: virtualMachineSize
       domainInfo: {
@@ -688,7 +692,6 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       }
     }
     dependsOn: [
-      nsgwinvm2
     ]
   }
   // TODO: add an rbac assignment for entra vm sign in.
@@ -716,7 +719,7 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       administratorLoginPassword: localAdminPassword
       administrators:{
         administratorType: 'ActiveDirectory'
-        azureADOnlyAuthentication: false
+        azureADOnlyAuthentication: true
         login: AzAdminName
         principalType: 'Group'
         tenantId: subscription().tenantId
@@ -807,11 +810,12 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       scriptContent: loadTextContent('./Scripts/IntuneAppPassword.ps1')
       storageAccountSettings: {
         storageAccountName: labSA.name
+        storageAccountKey: labSA.listKeys().keys[0].value
       }
       containerSettings: {
         subnetIds: [
           {
-            id: (!virtualNetwork.provisionNew) ? vnet.outputs.vnetSubnets[3].id : containerSubnet.id
+            id: virtualNetwork.provisionNew ? vnet.outputs.vnetSubnets[3].id : containerSubnet.id
           }
         ]
       }
@@ -867,6 +871,7 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       dbadmin: localAdminName
       dbadminpass: localAdminPassword
       dbname: intuneCDDB.name
+      dbServerName: sqlServer.name
       farmId: intuneCDWebServer.id
       keyvault: keyVault.outputs.keyVaultObject
       location: location
@@ -881,15 +886,20 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
     ]
   }
 // Create Storage Account
+  // TODO: Migrate deployment scripts to use managed identity for storage instead of key-based auth
   resource labSA 'Microsoft.Storage/storageAccounts@2021-09-01' = {
     name: storageAccountName
     location: location
+    tags: {
+      SecurityControl: 'Ignore'
+    }
     sku: {
       name: storageSKU
     }
     kind: 'StorageV2'
     properties: {
       supportsHttpsTrafficOnly: true
+      allowSharedKeyAccess: true
     }
   }
   var saPrincipalName = '${namePrefix}-saPrincipal1'
@@ -1008,7 +1018,7 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
     params: {
       location: location
       networkInterfaceName: '${dcVMName}-nic1'
-      subnetRef: (!virtualNetwork.provisionNew) ? vnet.outputs.vnetSubnets[1].id : trustedSubnet.id
+      subnetRef: virtualNetwork.provisionNew ? vnet.outputs.vnetSubnets[1].id : trustedSubnet.id
       virtualMachineName: dcVMName
       virtualMachineComputerName: dcVMName
       virtualMachineSize: virtualMachineSize
@@ -1139,6 +1149,10 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       arguments: ' -resourceGroupName ${resourceGroup().name} -workspaceName ${logAnalyticsWorkspace.name} -subscriptionId ${subscription().subscriptionId} -managedidentityclientid ${sentinelPrincipal.properties.clientId}'
       azPowerShellVersion: '9.7'
       scriptContent: loadTextContent('./Scripts/SentinelSetup.ps1')
+      storageAccountSettings: {
+        storageAccountName: labSA.name
+        storageAccountKey: labSA.listKeys().keys[0].value
+      }
     }
     dependsOn: [
       sentinelPrincipalContributor
@@ -1163,7 +1177,7 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       galleryName: appGalleryname
       appName: 'CloudSync'
       fileURI: '${labSA.properties.primaryEndpoints.blob}${containerName}/AADConnectProvisioningAgentSetup.exe?${_appsSasToken}'
-      installCommand: '.\\AADConnectProvisioningAgentSetup.exe /quiet /norestart'
+      installCommand: '.\\CloudSync.exe /quiet /norestart'
       uninstallCommand: 'uninstall.exe'
     }
     dependsOn: [
@@ -1178,7 +1192,7 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
       galleryName: appGalleryname
       appName: 'EntraPrivateNetworkConnector'
       fileURI: '${labSA.properties.primaryEndpoints.blob}${containerName}/MicrosoftEntraPrivateNetworkConnectorInstaller.exe?${_appsSasToken}'
-      installCommand: '.\\MicrosoftEntraPrivateNetworkConnectorInstaller.exe REGISTERCONNECTOR="false" /q'
+      installCommand: '.\\EntraPrivateNetworkConnector.exe REGISTERCONNECTOR="false" /q'
       uninstallCommand: 'uninstall.exe'
     }
     dependsOn: [
@@ -1224,11 +1238,11 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
         ipRules: []
         virtualNetworkRules: [
           {
-            id: (!virtualNetwork.provisionNew) ? vnet.outputs.vnetSubnets[1].id : trustedSubnet.id
+            id: virtualNetwork.provisionNew ? vnet.outputs.vnetSubnets[1].id : trustedSubnet.id
             ignoreMissingVnetServiceEndpoint: false
           }
           {
-            id: (!virtualNetwork.provisionNew) ? vnet.outputs.vnetSubnets[3].id : containerSubnet.id
+            id: virtualNetwork.provisionNew ? vnet.outputs.vnetSubnets[3].id : containerSubnet.id
             ignoreMissingVnetServiceEndpoint: false
           }
         ]
@@ -1271,7 +1285,7 @@ var _appsSasToken = labSA.listServiceSas('2021-09-01', {
   }
 
 
-output workspaceId string = logAnalyticsWorkspace.id
-output workspaceName string = logAnalyticsWorkspace.name
-output solutionId string = sentinel.id
-output solutionName string = sentinel.name
+output workspaceId string = provisionSentinel ? logAnalyticsWorkspace.id : ''
+output workspaceName string = provisionSentinel ? logAnalyticsWorkspace.name : ''
+output solutionId string = provisionSentinel ? sentinel.id : ''
+output solutionName string = provisionSentinel ? sentinel.name : ''
